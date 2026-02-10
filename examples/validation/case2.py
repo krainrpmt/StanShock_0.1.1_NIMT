@@ -29,9 +29,14 @@ import cantera as ct
 from StanShock.stanShock import stanShock
 from StanShock.utils import getPressureData
 
+######Additional Code to Obtain Project Directory#######
+from pathlib import Path
+PROJECT_DIR = Path(__file__).resolve().parents[2]
+print(type(PROJECT_DIR))
+########################################################
 
-def main(data_filename: str = "data/validation/case2.csv",
-         mech_filename: str = "data/mechanisms/Nitrogen.xml",
+def main(data_filename: str = PROJECT_DIR / "data/validation/case2.csv",
+         mech_filename: str = PROJECT_DIR / "data/mechanisms/Nitrogen.xml",
          show_results: bool = True,
          results_location: Optional[str] = None) -> None:
     #=============================================================================

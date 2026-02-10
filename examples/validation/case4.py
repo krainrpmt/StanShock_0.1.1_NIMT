@@ -30,6 +30,12 @@ import imageio
 from StanShock.stanShock import stanShock
 
 
+######Additional Code to Obtain Project Directory#######
+from pathlib import Path
+PROJECT_DIR = Path(__file__).resolve().parents[2]
+print(type(PROJECT_DIR))
+########################################################
+
 #=============================================================================
 def getPressureData(fileName):
     '''
@@ -62,8 +68,8 @@ def getPressureData(fileName):
     return (t,p)
 
 
-def main(data_filename: str = "data/validation/case4.png",
-         mech_filename: str = "data/mechanisms/N2O2HeAr.xml",
+def main(data_filename: str = PROJECT_DIR / "data/validation/case4.png",
+         mech_filename: str = PROJECT_DIR / "data/mechanisms/N2O2HeAr.xml",
          show_results: bool = True,
          results_location: Optional[str] = None) -> None:
     #=============================================================================
