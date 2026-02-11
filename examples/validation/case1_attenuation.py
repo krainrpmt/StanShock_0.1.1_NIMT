@@ -175,7 +175,7 @@ def main(
     )
 
     # Attenuation probes in the driven section
-    probe_locations: Sequence[float] = (2.0, 5.0, 8.0)
+    probe_locations: Sequence[float] = (2.0,3.0,4.0,5.0,6.0,7.0,8.0)
     for i, x_probe in enumerate(probe_locations):
         ssbl.addProbe(x_probe, probeName=f"probe_{i+1}")
 
@@ -250,9 +250,9 @@ def main(
     else:
         print("Shock-speed attenuation dU_s/dx [(m/s)/m]: unavailable (insufficient valid probe segments)")
     if np.isfinite(us_percent_attenuation_rate):
-        print("Percent speed-change attenuation (slope/intercept*100) [%/m]: %.6f" % us_percent_attenuation_rate)
+        print("Percent speed-change attenuation (slope/intercept*100) [%%/m]: %.6f" % us_percent_attenuation_rate)
     else:
-        print("Percent speed-change attenuation (slope/intercept*100) [%/m]: unavailable")
+        print("Percent speed-change attenuation (slope/intercept*100) [%%/m]: unavailable")
     if np.isfinite(ms_attenuation_rate):
         print("Mach attenuation dM_s/dx [1/m]: %.6f" % ms_attenuation_rate)
     else:
