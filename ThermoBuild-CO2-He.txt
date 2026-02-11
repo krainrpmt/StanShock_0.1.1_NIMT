@@ -1,0 +1,56 @@
+ CO2             He                                                                                                                                              
+
+
+  OPTIONS:  joules                                  
+
+
+
+   NOTE:  Thermodynamic properties calculated for temperatures outside the range of 
+        the fitted data may have large errors.  This program allows calculations only 
+        for temperatures within 20% above or below the fitted temperature range.
+
+
+
+
+                      COEFFICIENTS FOR FITTED THERMODYNAMIC FUNCTIONS
+       4.943650540D+04-6.264116010D+02 5.301725240D+00 2.503813816D-03-2.127308728D-07
+      -7.689988780D-10 2.849677801D-13 0.000000000D+00-4.528198460D+04-7.048279440D+00
+       1.176962419D+05-1.788791477D+03 8.291523190D+00-9.223156780D-05 4.863676880D-09
+      -1.891053312D-12 6.330036590D-16 0.000000000D+00-3.908350590D+04-2.652669281D+01
+      -1.544423287D+09 1.016847056D+06-2.561405230D+02 3.369401080D-02-2.181184337D-06
+       6.991420840D-11-8.842351500D-16 0.000000000D+00-8.043214510D+06 2.254177493D+03
+
+
+
+
+   THERMODYNAMIC FUNCTIONS CALCULATED FROM COEFFICIENTS FOR CO2             
+
+
+      T         Cp        H-H298        S      -(G-H298)/T      H        delta Hf     log K
+      0        0.         -9.365       0.        INFINITE   -402.875    -393.142    INFINITE
+
+
+
+
+
+
+
+
+                      COEFFICIENTS FOR FITTED THERMODYNAMIC FUNCTIONS
+       0.000000000D+00 0.000000000D+00 2.500000000D+00 0.000000000D+00 0.000000000D+00
+       0.000000000D+00 0.000000000D+00 0.000000000D+00-7.453750000D+02 9.287239740D-01
+       0.000000000D+00 0.000000000D+00 2.500000000D+00 0.000000000D+00 0.000000000D+00
+       0.000000000D+00 0.000000000D+00 0.000000000D+00-7.453750000D+02 9.287239740D-01
+       3.396845420D+06-2.194037652D+03 3.080231878D+00-8.068957550D-05 6.252784910D-09
+      -2.574990067D-13 4.429960218D-18 0.000000000D+00 1.650518960D+04-4.048814390D+00
+
+
+
+
+   THERMODYNAMIC FUNCTIONS CALCULATED FROM COEFFICIENTS FOR He              
+
+
+      T         Cp        H-H298        S      -(G-H298)/T      H        delta Hf     log K
+      0        0.         -6.197       0.        INFINITE     -6.197        0       INFINITE
+
+
