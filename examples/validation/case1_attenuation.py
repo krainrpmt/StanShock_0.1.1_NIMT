@@ -255,9 +255,9 @@ def main(
     else:
         print("Shock-speed attenuation dU_s/dx [(m/s)/m]: unavailable (insufficient valid probe segments)")
     if np.isfinite(us_percent_attenuation_rate):
-        print("Percent speed-change attenuation (slope/intercept*100) [%/m]: %.6f" % us_percent_attenuation_rate)
+        print("Percent speed-change attenuation (slope/intercept*100) [%%/m]: %.6f" % us_percent_attenuation_rate)
     else:
-        print("Percent speed-change attenuation (slope/intercept*100) [%/m]: unavailable")
+        print("Percent speed-change attenuation (slope/intercept*100) [%%/m]: unavailable")
     if np.isfinite(ms_attenuation_rate):
         print("Mach attenuation dM_s/dx [1/m]: %.6f" % ms_attenuation_rate)
     else:
