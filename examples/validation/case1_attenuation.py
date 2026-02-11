@@ -35,40 +35,24 @@ def _shock_metrics_from_probe(
     t: np.ndarray,
     p: np.ndarray,
     baseline_pressure: float,
-    gradient_fraction: float = 0.35,
-    search_fraction: float = 0.45,
+    threshold_fraction: float = 0.12,
 ) -> Tuple[float, float, float]:
     """
-    Extract incident-shock arrival and strength from a probe trace.
+    Extract shock arrival and strength from a probe trace.
 
-    Technique:
-    - compute smoothed dp/dt,
-    - identify indices where dp/dt exceeds a fraction of its positive maximum,
-    - choose the FIRST such index as incident shock arrival (avoids selecting reflected shock),
-    - define shock pressure as local maximum in a short window after arrival.
+    Returns:
+        (arrival_time, shock_pressure, attenuation_metric)
+        where attenuation_metric = ln(p_shock / p1)
     """
-    if len(t) < 8:
-        raise RuntimeError("Probe trace is too short to determine shock metrics.")
+    p_threshold = baseline_pressure + threshold_fraction * (np.max(p) - baseline_pressure)
+    crossing_indices = np.where(p >= p_threshold)[0]
+    if len(crossing_indices) == 0:
+        raise RuntimeError("No shock crossing found at probe; adjust threshold_fraction.")
 
-    dpdt = np.gradient(p, t)
-    kernel = np.ones(7) / 7.0
-    dpdt_smooth = np.convolve(dpdt, kernel, mode="same")
-
-    n_search = max(8, int(len(t) * search_fraction))
-    dpdt_search = dpdt_smooth[:n_search]
-    positive_max = float(np.max(dpdt_search))
-    if positive_max <= 0.0:
-        raise RuntimeError("No positive pressure front detected at probe.")
-
-    grad_threshold = gradient_fraction * positive_max
-    candidate = np.where(dpdt_search >= grad_threshold)[0]
-    if len(candidate) == 0:
-        raise RuntimeError("No shock crossing found at probe; lower gradient_fraction.")
-
-    i_shock = int(candidate[0])
+    i_shock = int(crossing_indices[0])
     i1 = i_shock
-    i2 = min(len(p), i_shock + 6)
-    shock_pressure = float(np.mean(p[i1:i2]))
+    i2 = min(len(p), i_shock + 20)
+    shock_pressure = float(np.max(p[i1:i2]))
     arrival_time = float(t[i_shock])
     attenuation_metric = float(np.log(shock_pressure / baseline_pressure))
     return arrival_time, shock_pressure, attenuation_metric
@@ -78,9 +62,6 @@ def main(
     mech_filename: str = PROJECT_DIR / "data/mechanisms/Nitrogen.xml",
     show_results: bool = True,
     results_location: Optional[str] = None,
-    t_final: float = 60e-3,
-    n_x: int = 1000,
-    cfl: float = 0.9,
 ) -> None:
     ct.add_directory(PROJECT_DIR)
     # provided condtions for Case 1
@@ -88,7 +69,7 @@ def main(
     T1 = 292.05
     p1 = 2026.499994
     p2 = 13340.21567
-    tFinal = t_final
+    tFinal = 60e-3
 
     # plotting parameters
     fontsize = 11
@@ -115,7 +96,7 @@ def main(
     gas4.TP = T4, p4
 
     # set up geometry
-    nX = n_x  # mesh resolution
+    nX = 1000  # mesh resolution
     xLower = -LDriver
     xUpper = LDriven
     xShock = 0.0
@@ -148,7 +129,7 @@ def main(
         gas1,
         initializeRiemannProblem=(state4, state1, geometry),
         boundaryConditions=boundaryConditions,
-        cfl=cfl,
+        cfl=0.9,
         outputEvery=100,
         includeBoundaryLayerTerms=True,
         DOuter=D,
