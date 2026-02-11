@@ -30,75 +30,48 @@ from StanShock.stanShock import stanShock
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 
-# Note: small no-op comment to force a new commit/PR cycle.
 
 def _shock_metrics_from_probe(
     t: np.ndarray,
     p: np.ndarray,
     baseline_pressure: float,
-    gradient_fraction: float = 0.35,
-    search_fraction: float = 0.45,
+    threshold_fraction: float = 0.12,
 ) -> Tuple[float, float, float]:
     """
-    Extract incident-shock arrival and strength from a probe trace.
+    Extract shock arrival and strength from a probe trace.
 
-    Technique:
-    - compute smoothed dp/dt,
-    - identify indices where dp/dt exceeds a fraction of its positive maximum,
-    - choose the FIRST such index as incident shock arrival (avoids selecting reflected shock),
-    - define shock pressure as local maximum in a short window after arrival.
+    Returns:
+        (arrival_time, shock_pressure, attenuation_metric)
+        where attenuation_metric = ln(p_shock / p1)
     """
-    if len(t) < 8:
-        raise RuntimeError("Probe trace is too short to determine shock metrics.")
+    p_threshold = baseline_pressure + threshold_fraction * (np.max(p) - baseline_pressure)
+    crossing_indices = np.where(p >= p_threshold)[0]
+    if len(crossing_indices) == 0:
+        raise RuntimeError("No shock crossing found at probe; adjust threshold_fraction.")
 
-    dpdt = np.gradient(p, t)
-    kernel = np.ones(7) / 7.0
-    dpdt_smooth = np.convolve(dpdt, kernel, mode="same")
-
-    n_search = max(8, int(len(t) * search_fraction))
-    dpdt_search = dpdt_smooth[:n_search]
-    positive_max = float(np.max(dpdt_search))
-    if positive_max <= 0.0:
-        raise RuntimeError("No positive pressure front detected at probe.")
-
-    grad_threshold = gradient_fraction * positive_max
-    candidate = np.where(dpdt_search >= grad_threshold)[0]
-    if len(candidate) == 0:
-        raise RuntimeError("No shock crossing found at probe; lower gradient_fraction.")
-
-    i_shock = int(candidate[0])
+    i_shock = int(crossing_indices[0])
     i1 = i_shock
-    i2 = min(len(p), i_shock + 6)
-    shock_pressure = float(np.mean(p[i1:i2]))
+    i2 = min(len(p), i_shock + 20)
+    shock_pressure = float(np.max(p[i1:i2]))
     arrival_time = float(t[i_shock])
     attenuation_metric = float(np.log(shock_pressure / baseline_pressure))
     return arrival_time, shock_pressure, attenuation_metric
 
 
 def main(
-    mech_filename: str = "gri30.yaml",
+    mech_filename: str = PROJECT_DIR / "data/mechanisms/N2O2HeAr.xml",
     show_results: bool = True,
     results_location: Optional[str] = None,
-    t_final: float = 60e-3,
-    n_x: int = 1000,
-    cfl: float = 0.9,
     buffer_test_interface_x: float = 6.0,
     reacting: bool = False,
-    # user-specified thermodynamic states
-    T1_buffer: float = 292.05,
-    P1_buffer: float = 2026.499994,
-    T1_test: float = 292.05,
-    P1_test: float = 2026.499994,
-    T4_driver: float = 292.05,
-    P4_driver: float = 25000.0,
-    # user-specified compositions
-    X_buffer: str = "O2:0.21,AR:0.79",
-    X_test: str = "N2:1.0",
-    X_driver: str = "H2:0.25,N2:0.75",
 ) -> None:
     ct.add_directory(PROJECT_DIR)
-    # simulation controls
-    tFinal = t_final
+    # provided condtions for Case 1
+    Ms = 2.4
+    T1 = 292.05
+    p1 = 2026.499994
+    p2 = 13340.21567
+    tFinal = 60e-3
 
     # plotting parameters
     fontsize = 11
@@ -117,13 +90,27 @@ def main(
     gas_test = ct.Solution(mech_filename)
     gas_driver = ct.Solution(mech_filename)
 
-    # User-specified states (no P4/Mach inference)
-    gas_buffer.TPX = T1_buffer, P1_buffer, X_buffer
-    gas_test.TPX = T1_test, P1_test, X_test
-    gas_driver.TPX = T4_driver, P4_driver, X_driver
+    # Example compositions (edit these freely for your CRV design studies)
+    # Keep species inside the chosen mechanism file.
+    X_buffer = "O2:0.21,AR:0.79"
+    X_test = "N2:1.0"
+    X_driver = "HE:0.25,N2:0.75"
+
+    T4 = T1  # assumed
+    gas_buffer.TPX = T1, p1, X_buffer
+    gas_test.TPX = T1, p1, X_test
+
+    # Use buffer-gas acoustic properties for p4 estimate (classic 2-region estimate)
+    gas_driver.TPX = T4, p1, X_driver  # placeholder pressure for gamma estimate
+    g1 = gas_buffer.cp / gas_buffer.cv
+    g4 = gas_driver.cp / gas_driver.cv
+    a4oa1 = np.sqrt(g4 / g1 * T4 / T1 * gas_buffer.mean_molecular_weight / gas_driver.mean_molecular_weight)
+    p4 = p2 * (1.0 - (g4 - 1.0) / (g1 + 1.0) / a4oa1 * (Ms - 1.0 / Ms)) ** (-2.0 * g4 / (g4 - 1.0))
+    p4 *= 1.05  # account for diaphragm
+    gas_driver.TPX = T4, p4, X_driver
 
     # set up geometry
-    nX = n_x  # mesh resolution
+    nX = 1000  # mesh resolution
     xLower = -LDriver
     xUpper = LDriven
     xShock = 0.0
@@ -156,11 +143,11 @@ def main(
         gas_buffer,
         initializeRiemannProblem=(state4, state1, geometry),
         boundaryConditions=boundaryConditions,
-        cfl=cfl,
+        cfl=0.9,
         outputEvery=100,
         includeBoundaryLayerTerms=True,
         DOuter=D,
-        Tw=T1_buffer,  # assume wall temperature near driven initial gas temperature
+        Tw=T1,  # assume wall temperature is in thermal eq. with gas
         dlnAdx=dlnAdx,
     )
 
@@ -214,7 +201,7 @@ def main(
     for probe in ssbl.probes:
         t_probe = np.array(probe.t)
         p_probe = np.array(probe.p)
-        arrival_t, p_shock, attn = _shock_metrics_from_probe(t_probe, p_probe, P1_buffer)
+        arrival_t, p_shock, attn = _shock_metrics_from_probe(t_probe, p_probe, p1)
         arrivals.append(arrival_t)
         shock_pressures.append(p_shock)
         attenuation_values.append(attn)
@@ -235,7 +222,7 @@ def main(
     print("Shock arrival times [ms]:", arrivals * 1e3)
     print("Shock pressures [bar]:", shock_pressures / 1e5)
     print("ln(p_shock/p1):", attenuation_values)
-    print("Attenuation rate dln(p_shock/P1_buffer)/dx [1/m]: %.6f" % attenuation_rate)
+    print("Attenuation rate dln(p_shock/p1)/dx [1/m]: %.6f" % attenuation_rate)
     print("Average shock speed from x(t_arrival) [m/s]: %.3f" % x_t_slope)
 
     # Pressure-spike metrics useful for end-wall design
@@ -261,7 +248,7 @@ def main(
         axes[i].legend(loc="upper right")
     axes[-1].set_xlabel("t [ms]")
     fig.suptitle(
-        "Case 1 three-region (Boundary Layer ON)\nAttenuation rate dln(p_shock/P1_buffer)/dx = %.4f 1/m" % attenuation_rate,
+        "Case 1 three-region (Boundary Layer ON)\nAttenuation rate dln(p_shock/p1)/dx = %.4f 1/m" % attenuation_rate,
         y=0.995,
     )
     fig.tight_layout(rect=[0, 0, 1, 0.96])
@@ -281,9 +268,6 @@ def main(
             probe_arrival_times=arrivals,
             probe_shock_pressures=shock_pressures,
             probe_attenuation=attenuation_values,
-            p1_buffer=P1_buffer,
-            p1_test=P1_test,
-            p4_driver=P4_driver,
             attenuation_rate=attenuation_rate,
             attenuation_intercept=attenuation_intercept,
             shock_speed_average=x_t_slope,
