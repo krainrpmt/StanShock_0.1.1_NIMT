@@ -99,13 +99,15 @@ def main(
     t_final: float = 60e-3,
     n_x: int = 1000,
     cfl: float = 0.9,
+    T1: float = 292.05,
+    P1: float = 2026.499994,
+    T4: float = 292.05,
+    P4: float = 14000.0,
+    X1: Optional[str] = None,
+    X4: Optional[str] = None,
 ) -> None:
     ct.add_directory(PROJECT_DIR)
-    # provided condtions for Case 1
-    Ms = 2.4
-    T1 = 292.05
-    p1 = 2026.499994
-    p2 = 13340.21567
+    # simulation controls
     tFinal = t_final
 
     # plotting parameters
@@ -117,20 +119,21 @@ def main(
     LDriver = 142.0 * 0.0254
     LDriven = 9.73
 
-    # Set up gasses and determine the initial pressures
+    # Set up gases from user-provided initial states
     u1 = 0.0
     u4 = 0.0  # initially 0 velocity
     gas1 = ct.Solution(mech_filename)
     gas4 = ct.Solution(mech_filename)
-    T4 = T1  # assumed
-    gas1.TP = T1, p1
-    gas4.TP = T4, p1  # use p1 as a place holder
-    g1 = gas1.cp / gas1.cv
-    g4 = gas4.cp / gas4.cv
-    a4oa1 = np.sqrt(g4 / g1 * T4 / T1 * gas1.mean_molecular_weight / gas4.mean_molecular_weight)
-    p4 = p2 * (1.0 - (g4 - 1.0) / (g1 + 1.0) / a4oa1 * (Ms - 1.0 / Ms)) ** (-2.0 * g4 / (g4 - 1.0))
-    p4 *= 1.05  # account for diaphragm
-    gas4.TP = T4, p4
+
+    if X1 is None:
+        gas1.TP = T1, P1
+    else:
+        gas1.TPX = T1, P1, X1
+
+    if X4 is None:
+        gas4.TP = T4, P4
+    else:
+        gas4.TPX = T4, P4, X4
 
     # set up geometry
     nX = n_x  # mesh resolution
@@ -175,7 +178,7 @@ def main(
     )
 
     # Attenuation probes in the driven section
-    probe_locations: Sequence[float] = (2.0,3.0,4.0,5.0,6.0,7.0,8.0)
+    probe_locations: Sequence[float] = (2.0, 5.0, 8.0)
     for i, x_probe in enumerate(probe_locations):
         ssbl.addProbe(x_probe, probeName=f"probe_{i+1}")
 
@@ -194,7 +197,7 @@ def main(
     for probe in ssbl.probes[:len(probe_locations)]:
         t_probe = np.array(probe.t)
         p_probe = np.array(probe.p)
-        arrival_t, p_shock, attn = _shock_metrics_from_probe(t_probe, p_probe, p1)
+        arrival_t, p_shock, attn = _shock_metrics_from_probe(t_probe, p_probe, P1)
         arrivals.append(arrival_t)
         shock_pressures.append(p_shock)
         attenuation_values.append(attn)
@@ -236,11 +239,13 @@ def main(
         us_percent_attenuation_rate = np.nan
 
     print("\n==== Shock attenuation metrics (BL model ON) ====")
+    print("Initial state driven  (T1 [K], P1 [Pa]):", (T1, P1))
+    print("Initial state driver  (T4 [K], P4 [Pa]):", (T4, P4))
     print("Probe positions [m]:", x_probe)
     print("Shock arrival times [ms]:", arrivals * 1e3)
     print("Shock pressures [bar]:", shock_pressures / 1e5)
     print("ln(p_shock/p1):", attenuation_values)
-    print("Attenuation rate dln(p_shock/p1)/dx [1/m]: %.6f" % attenuation_rate)
+    print("Attenuation rate dln(p_shock/P1)/dx [1/m]: %.6f" % attenuation_rate)
     print("Average shock speed from x(t_arrival) [m/s]: %.3f" % x_t_slope)
     if len(us_seg) > 0:
         print("Segment centers x [m]:", x_seg)
@@ -250,9 +255,9 @@ def main(
     else:
         print("Shock-speed attenuation dU_s/dx [(m/s)/m]: unavailable (insufficient valid probe segments)")
     if np.isfinite(us_percent_attenuation_rate):
-        print("Percent speed-change attenuation (slope/intercept*100) [%%/m]: %.6f" % us_percent_attenuation_rate)
+        print("Percent speed-change attenuation (slope/intercept*100) [%/m]: %.6f" % us_percent_attenuation_rate)
     else:
-        print("Percent speed-change attenuation (slope/intercept*100) [%%/m]: unavailable")
+        print("Percent speed-change attenuation (slope/intercept*100) [%/m]: unavailable")
     if np.isfinite(ms_attenuation_rate):
         print("Mach attenuation dM_s/dx [1/m]: %.6f" % ms_attenuation_rate)
     else:
@@ -278,7 +283,7 @@ def main(
         axes[i].legend(loc="upper right")
     axes[-1].set_xlabel("t [ms]")
     fig.suptitle(
-        "Case 1 (Boundary Layer ON)\nAttenuation rate dln(p_shock/p1)/dx = %.4f 1/m" % attenuation_rate,
+        "Case 1 (Boundary Layer ON)\nAttenuation rate dln(p_shock/P1)/dx = %.4f 1/m" % attenuation_rate,
         y=0.995,
     )
     fig.tight_layout(rect=[0, 0, 1, 0.96])
@@ -298,6 +303,10 @@ def main(
             probe_arrival_times=arrivals,
             probe_shock_pressures=shock_pressures,
             probe_attenuation=attenuation_values,
+            T1=T1,
+            P1=P1,
+            T4=T4,
+            P4=P4,
             attenuation_rate=attenuation_rate,
             attenuation_intercept=attenuation_intercept,
             shock_speed_average=x_t_slope,
