@@ -35,41 +35,37 @@ def _shock_metrics_from_probe(
     t: np.ndarray,
     p: np.ndarray,
     baseline_pressure: float,
-    rise_fraction: float = 0.03,
+    gradient_fraction: float = 0.35,
+    search_fraction: float = 0.45,
 ) -> Tuple[float, float, float]:
     """
     Extract incident-shock arrival and strength from a probe trace.
 
-    Shock-capturing logic used here:
-    1) Estimate probe baseline pressure from the first ~5% of samples.
-    2) Compute an adaptive rise threshold as:
-         p_threshold = p_baseline + rise_fraction * (p_max - p_baseline)
-       This intentionally allows detection of a *small first step* (incident shock)
-       even when a larger reflected-shock jump appears later.
-    3) Pick the first time index where pressure crosses p_threshold.
-    4) Refine arrival to the strongest local dp/dt near that crossing.
-    5) Compute shock pressure as the short-window mean right after arrival.
+    Technique:
+    - compute smoothed dp/dt,
+    - identify indices where dp/dt exceeds a fraction of its positive maximum,
+    - choose the FIRST such index as incident shock arrival (avoids selecting reflected shock),
+    - define shock pressure as local maximum in a short window after arrival.
     """
-    if len(t) < 10:
+    if len(t) < 8:
         raise RuntimeError("Probe trace is too short to determine shock metrics.")
 
-    n0 = max(5, int(0.05 * len(p)))
-    p_baseline = float(np.mean(p[:n0]))
-    p_dynamic = float(np.max(p) - p_baseline)
-    if p_dynamic <= 0.0:
-        raise RuntimeError("No pressure rise detected at probe.")
+    dpdt = np.gradient(p, t)
+    kernel = np.ones(7) / 7.0
+    dpdt_smooth = np.convolve(dpdt, kernel, mode="same")
 
-    p_threshold = p_baseline + rise_fraction * p_dynamic
-    crossing = np.where(p >= p_threshold)[0]
-    if len(crossing) == 0:
-        raise RuntimeError("No shock crossing found at probe; lower rise_fraction.")
+    n_search = max(8, int(len(t) * search_fraction))
+    dpdt_search = dpdt_smooth[:n_search]
+    positive_max = float(np.max(dpdt_search))
+    if positive_max <= 0.0:
+        raise RuntimeError("No positive pressure front detected at probe.")
 
-    i_cross = int(crossing[0])
-    i_lo = max(1, i_cross - 5)
-    i_hi = min(len(p) - 1, i_cross + 6)
-    dpdt_local = np.gradient(p[i_lo:i_hi], t[i_lo:i_hi])
-    i_shock = i_lo + int(np.argmax(dpdt_local))
+    grad_threshold = gradient_fraction * positive_max
+    candidate = np.where(dpdt_search >= grad_threshold)[0]
+    if len(candidate) == 0:
+        raise RuntimeError("No shock crossing found at probe; lower gradient_fraction.")
 
+    i_shock = int(candidate[0])
     i1 = i_shock
     i2 = min(len(p), i_shock + 6)
     shock_pressure = float(np.mean(p[i1:i2]))
