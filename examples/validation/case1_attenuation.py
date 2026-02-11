@@ -93,18 +93,19 @@ def _gas_sound_speed(gas: ct.Solution) -> float:
 
 
 def main(
-    mech_filename_gas_1: str = "gri30.yaml",
-    mech_filename_gas_4: str = PROJECT_DIR / "data/mechanisms/HeliumArgon.xml",
+        #PROJECT_DIR / "data/mechanisms/HeliumArgon.xml",
+    mech_filename_gas_1: str = "gri30_He.yaml",
+    mech_filename_gas_4: str = "gri30_He.yaml",
     show_results: bool = True,
     results_location: Optional[str] = None,
-    t_final: float = 30e-3,
+    t_final: float = 10e-3,
     n_x: int = 1000,
     cfl: float = 0.9,
     T1: float = 296.15,
     P1: float = 10000,
     T4: float = 296.15,
     P4: float = 648000,
-    X1: Optional[str] = 'H2:9.5, O2:71, N2:71.5',
+    X1: Optional[str] = 'H2:9.5, O2:19, N2:71.5',
     X4: Optional[str] = 'HE:99.9348 ,AR:0.0652'
 
 ) -> None:
@@ -176,14 +177,14 @@ def main(
         boundaryConditions=boundaryConditions,
         cfl=cfl,
         outputEvery=100,
-        includeBoundaryLayerTerms=True,
+        includeBoundaryLayerTerms=False,
         DOuter=D,
         Tw=T1,  # assume wall temperature is in thermal eq. with gas
         dlnAdx=dlnAdx,
     )
 
     # Attenuation probes in the driven section
-    probe_locations: Sequence[float] = (2.0, 5.0, 8.0)
+    probe_locations: Sequence[float] = (1.0,2.0,3.0,4.0,5.0,5.47)
     for i, x_probe in enumerate(probe_locations):
         ssbl.addProbe(x_probe, probeName=f"probe_{i+1}")
 
