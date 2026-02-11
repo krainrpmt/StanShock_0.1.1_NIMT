@@ -57,19 +57,14 @@ def _shock_metrics_from_probe(
     p_baseline = float(np.mean(p[:n0]))
     p_dynamic = float(np.max(p) - p_baseline)
     if p_dynamic <= 0.0:
-        arrival_time = float(t[0])
-        shock_pressure = p_baseline
-        attenuation_metric = float(np.log(max(shock_pressure, 1e-12) / baseline_pressure))
-        return arrival_time, shock_pressure, attenuation_metric
+        raise RuntimeError("No pressure rise detected at probe.")
 
     p_threshold = p_baseline + rise_fraction * p_dynamic
     crossing = np.where(p >= p_threshold)[0]
     if len(crossing) == 0:
-        i_cross = int(np.argmax(np.gradient(p, t)))
-    else:
-        i_cross = int(crossing[0])
+        raise RuntimeError("No shock crossing found at probe; lower rise_fraction.")
 
-
+    i_cross = int(crossing[0])
     i_lo = max(1, i_cross - 5)
     i_hi = min(len(p) - 1, i_cross + 6)
     dpdt_local = np.gradient(p[i_lo:i_hi], t[i_lo:i_hi])
@@ -200,26 +195,6 @@ def main(
     # average shock speed from x(t_arrival)
     x_t_slope, x_t_intercept = np.polyfit(arrivals, x_probe, 1)
 
-    # shock-speed attenuation from probe-to-probe travel times
-    dt_seg = np.diff(arrivals)
-    dx_seg = np.diff(x_probe)
-    valid_seg = dt_seg > 0.0
-    if np.count_nonzero(valid_seg) >= 2:
-        x_seg = 0.5 * (x_probe[:-1][valid_seg] + x_probe[1:][valid_seg])
-        us_seg = dx_seg[valid_seg] / dt_seg[valid_seg]
-        us_attenuation_rate, us_intercept = np.polyfit(x_seg, us_seg, 1)
-
-        a1 = float(gas1.sound_speed)
-        ms_seg = us_seg / a1
-        ms_attenuation_rate, ms_intercept = np.polyfit(x_seg, ms_seg, 1)
-    else:
-        us_seg = np.array([])
-        ms_seg = np.array([])
-        us_attenuation_rate = np.nan
-        us_intercept = np.nan
-        ms_attenuation_rate = np.nan
-        ms_intercept = np.nan
-
     print("\n==== Shock attenuation metrics (BL model ON) ====")
     print("Probe positions [m]:", x_probe)
     print("Shock arrival times [ms]:", arrivals * 1e3)
@@ -227,14 +202,6 @@ def main(
     print("ln(p_shock/p1):", attenuation_values)
     print("Attenuation rate dln(p_shock/p1)/dx [1/m]: %.6f" % attenuation_rate)
     print("Average shock speed from x(t_arrival) [m/s]: %.3f" % x_t_slope)
-    if np.isfinite(us_attenuation_rate):
-        print("Shock-speed attenuation dU_s/dx [(m/s)/m]: %.6f" % us_attenuation_rate)
-    else:
-        print("Shock-speed attenuation dU_s/dx [(m/s)/m]: unavailable (insufficient valid probe segments)")
-    if np.isfinite(ms_attenuation_rate):
-        print("Mach attenuation dM_s/dx [1/m]: %.6f" % ms_attenuation_rate)
-    else:
-        print("Mach attenuation dM_s/dx [1/m]: unavailable (insufficient valid probe segments)")
 
     # --- Plots ---
     plt.close("all")
@@ -277,12 +244,6 @@ def main(
             attenuation_intercept=attenuation_intercept,
             shock_speed_average=x_t_slope,
             shock_speed_intercept=x_t_intercept,
-            shock_speed_segment=us_seg,
-            shock_speed_attenuation_rate=us_attenuation_rate,
-            shock_speed_attenuation_intercept=us_intercept,
-            shock_mach_segment=ms_seg,
-            shock_mach_attenuation_rate=ms_attenuation_rate,
-            shock_mach_attenuation_intercept=ms_intercept,
             xt_time=np.array(ssbl.XTDiagrams["pressure"].t),
             xt_x=np.array(ssbl.XTDiagrams["pressure"].x),
             xt_pressure=np.array(ssbl.XTDiagrams["pressure"].variable),
