@@ -93,18 +93,20 @@ def _gas_sound_speed(gas: ct.Solution) -> float:
 
 
 def main(
-    mech_filename: str = PROJECT_DIR / "data/mechanisms/Nitrogen.xml",
+    mech_filename_gas_1: str = "gri30.yaml",
+    mech_filename_gas_4: str = PROJECT_DIR / "data/mechanisms/HeliumArgon.xml",
     show_results: bool = True,
     results_location: Optional[str] = None,
-    t_final: float = 60e-3,
+    t_final: float = 30e-3,
     n_x: int = 1000,
     cfl: float = 0.9,
-    T1: float = 292.05,
-    P1: float = 2026.499994,
-    T4: float = 292.05,
-    P4: float = 14000.0,
-    X1: Optional[str] = None,
-    X4: Optional[str] = None,
+    T1: float = 296.15,
+    P1: float = 10000,
+    T4: float = 296.15,
+    P4: float = 648000,
+    X1: Optional[str] = 'H2:9.5, O2:71, N2:71.5',
+    X4: Optional[str] = 'HE:99.9348 ,AR:0.0652'
+
 ) -> None:
     ct.add_directory(PROJECT_DIR)
     # simulation controls
@@ -114,16 +116,16 @@ def main(
     fontsize = 11
 
     # provided geometry
-    DDriven = 4.5 * 0.0254
+    DDriven = 122.24/1000 #m
     DDriver = DDriven
-    LDriver = 142.0 * 0.0254
-    LDriven = 9.73
+    LDriver = 3.96 #m
+    LDriven = 5.49 #m
 
     # Set up gases from user-provided initial states
     u1 = 0.0
     u4 = 0.0  # initially 0 velocity
-    gas1 = ct.Solution(mech_filename)
-    gas4 = ct.Solution(mech_filename)
+    gas1 = ct.Solution(mech_filename_gas_1)
+    gas4 = ct.Solution(mech_filename_gas_4)
 
     if X1 is None:
         gas1.TP = T1, P1
@@ -134,6 +136,9 @@ def main(
         gas4.TP = T4, P4
     else:
         gas4.TPX = T4, P4, X4
+
+    print(gas1())
+    print(gas4())
 
     # set up geometry
     nX = n_x  # mesh resolution
