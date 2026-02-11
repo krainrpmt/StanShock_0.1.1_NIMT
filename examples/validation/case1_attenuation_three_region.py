@@ -30,6 +30,7 @@ from StanShock.stanShock import stanShock
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 
+# Note: small no-op comment to force a new commit/PR cycle.
 
 def _shock_metrics_from_probe(
     t: np.ndarray,
@@ -93,20 +94,29 @@ def _gas_sound_speed(gas: ct.Solution) -> float:
 
 
 def main(
-    mech_filename: str = PROJECT_DIR / "data/mechanisms/Nitrogen.xml",
+    mech_filename: str = "gri30.yaml",
     show_results: bool = True,
     results_location: Optional[str] = None,
     t_final: float = 60e-3,
     n_x: int = 1000,
     cfl: float = 0.9,
+    buffer_test_interface_x: float = 6.0,
+    reacting: bool = False,
+    # user-specified thermodynamic states
+    T1_buffer: float = 292.05,
+    P1_buffer: float = 2026.499994,
+    T1_test: float = 292.05,
+    P1_test: float = 2026.499994,
+    T4_driver: float = 292.05,
+    P4_driver: float = 25000.0,
+    # user-specified compositions
+    X_buffer: str = "O2:0.21,AR:0.79",
+    X_test: str = "N2:1.0",
+    X_driver: str = "H2:0.25,N2:0.75",
     reference_probe_x: float = 0.01,
 ) -> None:
     ct.add_directory(PROJECT_DIR)
-    # provided condtions for Case 1
-    Ms = 2.4
-    T1 = 292.05
-    p1 = 2026.499994
-    p2 = 13340.21567
+    # simulation controls
     tFinal = t_final
 
     # plotting parameters
@@ -118,20 +128,18 @@ def main(
     LDriver = 142.0 * 0.0254
     LDriven = 9.73
 
-    # Set up gasses and determine the initial pressures
+    # Set up gases and determine the initial pressures
+    # Region naming: driver (4), buffer (1b), test/CRV (1t)
     u1 = 0.0
     u4 = 0.0  # initially 0 velocity
-    gas1 = ct.Solution(mech_filename)
-    gas4 = ct.Solution(mech_filename)
-    T4 = T1  # assumed
-    gas1.TP = T1, p1
-    gas4.TP = T4, p1  # use p1 as a place holder
-    g1 = gas1.cp / gas1.cv
-    g4 = gas4.cp / gas4.cv
-    a4oa1 = np.sqrt(g4 / g1 * T4 / T1 * gas1.mean_molecular_weight / gas4.mean_molecular_weight)
-    p4 = p2 * (1.0 - (g4 - 1.0) / (g1 + 1.0) / a4oa1 * (Ms - 1.0 / Ms)) ** (-2.0 * g4 / (g4 - 1.0))
-    p4 *= 1.05  # account for diaphragm
-    gas4.TP = T4, p4
+    gas_buffer = ct.Solution(mech_filename)
+    gas_test = ct.Solution(mech_filename)
+    gas_driver = ct.Solution(mech_filename)
+
+    # User-specified states (no P4/Mach inference)
+    gas_buffer.TPX = T1_buffer, P1_buffer, X_buffer
+    gas_test.TPX = T1_test, P1_test, X_test
+    gas_driver.TPX = T4_driver, P4_driver, X_driver
 
     # set up geometry
     nX = n_x  # mesh resolution
@@ -161,29 +169,63 @@ def main(
     # Turn ON boundary-layer model as requested
     print("Solving with boundary layer terms")
     boundaryConditions = ["reflecting", "reflecting"]
-    state1 = (gas1, u1)
-    state4 = (gas4, u4)
+    state1 = (gas_buffer, u1)
+    state4 = (gas_driver, u4)
     ssbl = stanShock(
-        gas1,
+        gas_buffer,
         initializeRiemannProblem=(state4, state1, geometry),
         boundaryConditions=boundaryConditions,
         cfl=cfl,
         outputEvery=100,
         includeBoundaryLayerTerms=True,
         DOuter=D,
-        Tw=T1,  # assume wall temperature is in thermal eq. with gas
+        Tw=T1_buffer,  # assume wall temperature near driven initial gas temperature
         dlnAdx=dlnAdx,
     )
+
+    # --- Overwrite initial condition to create THREE regions: driver | buffer | test ---
+    # x < 0: driver, 0 <= x < interface: buffer, x >= interface: test (CRV)
+    if buffer_test_interface_x <= 0.0 or buffer_test_interface_x >= LDriven:
+        raise ValueError("buffer_test_interface_x must be inside driven section: 0 < x < LDriven")
+
+    driver_idx = ssbl.x < 0.0
+    buffer_idx = np.logical_and(ssbl.x >= 0.0, ssbl.x < buffer_test_interface_x)
+    test_idx = ssbl.x >= buffer_test_interface_x
+
+    ssbl.r[driver_idx] = gas_driver.density
+    ssbl.u[driver_idx] = u4
+    ssbl.p[driver_idx] = gas_driver.P
+    ssbl.gamma[driver_idx] = gas_driver.cp / gas_driver.cv
+    ssbl.Y[driver_idx, :] = gas_driver.Y
+
+    ssbl.r[buffer_idx] = gas_buffer.density
+    ssbl.u[buffer_idx] = u1
+    ssbl.p[buffer_idx] = gas_buffer.P
+    ssbl.gamma[buffer_idx] = gas_buffer.cp / gas_buffer.cv
+    ssbl.Y[buffer_idx, :] = gas_buffer.Y
+
+    ssbl.r[test_idx] = gas_test.density
+    ssbl.u[test_idx] = u1
+    ssbl.p[test_idx] = gas_test.P
+    ssbl.gamma[test_idx] = gas_test.cp / gas_test.cv
+    ssbl.Y[test_idx, :] = gas_test.Y
+
+    # Optional chemistry in test section only
+    ssbl.reacting = reacting
+    ssbl.inReactingRegion = lambda x, t: x >= buffer_test_interface_x
 
     # Attenuation probes in the driven section
     probe_locations: Sequence[float] = (2.0, 5.0, 8.0)
     for i, x_probe in enumerate(probe_locations):
         ssbl.addProbe(x_probe, probeName=f"probe_{i+1}")
 
-    # Reference probe near diaphragm to estimate initial/ideal shock speed U_s0
+    # Reference probe near diaphragm for U_s0 estimate
     if reference_probe_x <= 0.0 or reference_probe_x >= LDriven:
         raise ValueError("reference_probe_x must satisfy 0 < x < LDriven")
     ssbl.addProbe(reference_probe_x, probeName="probe_reference")
+
+    # end-wall probe for pressure-spike reporting
+    ssbl.addProbe(max(ssbl.x), probeName="endwall")
 
     # X-t diagram for pressure
     ssbl.addXTDiagram("pressure", skipSteps=10)
@@ -199,7 +241,7 @@ def main(
     for probe in ssbl.probes[:len(probe_locations)]:
         t_probe = np.array(probe.t)
         p_probe = np.array(probe.p)
-        arrival_t, p_shock, attn = _shock_metrics_from_probe(t_probe, p_probe, p1)
+        arrival_t, p_shock, attn = _shock_metrics_from_probe(t_probe, p_probe, P1_buffer)
         arrivals.append(arrival_t)
         shock_pressures.append(p_shock)
         attenuation_values.append(attn)
@@ -209,11 +251,10 @@ def main(
     shock_pressures = np.array(shock_pressures)
     attenuation_values = np.array(attenuation_values)
 
-    # Reference speed near diaphragm from a very short travel distance: U_s0 ≈ x_ref / t_ref
     t_ref, p_ref, _ = _shock_metrics_from_probe(
         np.array(ssbl.probes[len(probe_locations)].t),
         np.array(ssbl.probes[len(probe_locations)].p),
-        p1,
+        P1_buffer,
     )
     us0_reference = reference_probe_x / t_ref if t_ref > 0.0 else np.nan
 
@@ -232,8 +273,11 @@ def main(
         us_seg = dx_seg[valid_seg] / dt_seg[valid_seg]
         us_attenuation_rate, us_intercept = np.polyfit(x_seg, us_seg, 1)
 
-        a1 = _gas_sound_speed(gas1)
-        ms_seg = us_seg / a1
+        a_buffer = _gas_sound_speed(gas_buffer)
+        a_test = _gas_sound_speed(gas_test)
+        a_probe = np.where(x_probe < buffer_test_interface_x, a_buffer, a_test)
+        a_seg = 0.5 * (a_probe[:-1][valid_seg] + a_probe[1:][valid_seg])
+        ms_seg = us_seg / a_seg
         ms_attenuation_rate, ms_intercept = np.polyfit(x_seg, ms_seg, 1)
 
         if np.isfinite(us0_reference) and us0_reference > 0.0:
@@ -260,7 +304,7 @@ def main(
     print("Shock arrival times [ms]:", arrivals * 1e3)
     print("Shock pressures [bar]:", shock_pressures / 1e5)
     print("ln(p_shock/p1):", attenuation_values)
-    print("Attenuation rate dln(p_shock/p1)/dx [1/m]: %.6f" % attenuation_rate)
+    print("Attenuation rate dln(p_shock/P1_buffer)/dx [1/m]: %.6f" % attenuation_rate)
     print("Average shock speed from x(t_arrival) [m/s]: %.3f" % x_t_slope)
     print("Reference near-diaphragm speed U_s0 [m/s]:", us0_reference)
     if len(us_seg) > 0:
@@ -278,6 +322,14 @@ def main(
         print("Mach attenuation dM_s/dx [1/m]: %.6f" % ms_attenuation_rate)
     else:
         print("Mach attenuation dM_s/dx [1/m]: unavailable (insufficient valid probe segments)")
+
+    # Pressure-spike metrics useful for end-wall design
+    # Domain maximum is taken over the full X-t pressure history.
+    p_xt = np.array(ssbl.XTDiagrams["pressure"].variable)
+    p_max_domain = float(np.max(p_xt))
+    p_max_endwall = float(np.max(np.array(ssbl.probes[-1].p)))
+    print("Maximum pressure over full X-t domain [bar]: %.4f" % (p_max_domain / 1.0e5))
+    print("Maximum pressure at end-wall probe [bar]: %.4f" % (p_max_endwall / 1.0e5))
 
     # --- Plots ---
     plt.close("all")
@@ -299,7 +351,7 @@ def main(
         axes[i].legend(loc="upper right")
     axes[-1].set_xlabel("t [ms]")
     fig.suptitle(
-        "Case 1 (Boundary Layer ON)\nAttenuation rate dln(p_shock/p1)/dx = %.4f 1/m" % attenuation_rate,
+        "Case 1 three-region (Boundary Layer ON)\nAttenuation rate dln(p_shock/P1_buffer)/dx = %.4f 1/m" % attenuation_rate,
         y=0.995,
     )
     fig.tight_layout(rect=[0, 0, 1, 0.96])
@@ -314,11 +366,14 @@ def main(
 
     if results_location is not None:
         np.savez(
-            os.path.join(results_location, "case1_attenuation.npz"),
+            os.path.join(results_location, "case1_attenuation_three_region.npz"),
             probe_locations=x_probe,
             probe_arrival_times=arrivals,
             probe_shock_pressures=shock_pressures,
             probe_attenuation=attenuation_values,
+            p1_buffer=P1_buffer,
+            p1_test=P1_test,
+            p4_driver=P4_driver,
             attenuation_rate=attenuation_rate,
             attenuation_intercept=attenuation_intercept,
             shock_speed_average=x_t_slope,
@@ -333,13 +388,16 @@ def main(
             shock_mach_segment=ms_seg,
             shock_mach_attenuation_rate=ms_attenuation_rate,
             shock_mach_attenuation_intercept=ms_intercept,
+            p_max_domain=p_max_domain,
+            p_max_endwall=p_max_endwall,
+            buffer_test_interface_x=buffer_test_interface_x,
             xt_time=np.array(ssbl.XTDiagrams["pressure"].t),
             xt_x=np.array(ssbl.XTDiagrams["pressure"].x),
             xt_pressure=np.array(ssbl.XTDiagrams["pressure"].variable),
         )
-        fig.savefig(os.path.join(results_location, "case1_attenuation_probes.png"), dpi=200)
+        fig.savefig(os.path.join(results_location, "case1_attenuation_three_region_probes.png"), dpi=200)
         plt.figure(2)
-        plt.savefig(os.path.join(results_location, "case1_attenuation_xt.png"), dpi=200)
+        plt.savefig(os.path.join(results_location, "case1_attenuation_three_region_xt.png"), dpi=200)
 
 
 if __name__ == "__main__":
