@@ -174,11 +174,10 @@ def main(
         dlnAdx=dlnAdx,
     )
 
-    # Attenuation probes in the driven section
+    # Three probes in the driven section
     probe_locations: Sequence[float] = (2.0, 5.0, 8.0)
     for i, x_probe in enumerate(probe_locations):
         ssbl.addProbe(x_probe, probeName=f"probe_{i+1}")
-
 
     # X-t diagram for pressure
     ssbl.addXTDiagram("pressure", skipSteps=10)
@@ -191,7 +190,7 @@ def main(
     shock_pressures = []
     attenuation_values = []
 
-    for probe in ssbl.probes[:len(probe_locations)]:
+    for probe in ssbl.probes:
         t_probe = np.array(probe.t)
         p_probe = np.array(probe.p)
         arrival_t, p_shock, attn = _shock_metrics_from_probe(t_probe, p_probe, p1)
@@ -203,7 +202,6 @@ def main(
     arrivals = np.array(arrivals)
     shock_pressures = np.array(shock_pressures)
     attenuation_values = np.array(attenuation_values)
-
 
     # attenuation rate based on ln(p_shock/p1) vs x
     attenuation_rate, attenuation_intercept = np.polyfit(x_probe, attenuation_values, 1)
@@ -223,17 +221,13 @@ def main(
         a1 = _gas_sound_speed(gas1)
         ms_seg = us_seg / a1
         ms_attenuation_rate, ms_intercept = np.polyfit(x_seg, ms_seg, 1)
-
-        us_percent_attenuation_rate = 100.0 * us_attenuation_rate / us_intercept if us_intercept != 0.0 else np.nan
     else:
-        x_seg = np.array([])
         us_seg = np.array([])
         ms_seg = np.array([])
         us_attenuation_rate = np.nan
         us_intercept = np.nan
         ms_attenuation_rate = np.nan
         ms_intercept = np.nan
-        us_percent_attenuation_rate = np.nan
 
     print("\n==== Shock attenuation metrics (BL model ON) ====")
     print("Probe positions [m]:", x_probe)
@@ -242,17 +236,10 @@ def main(
     print("ln(p_shock/p1):", attenuation_values)
     print("Attenuation rate dln(p_shock/p1)/dx [1/m]: %.6f" % attenuation_rate)
     print("Average shock speed from x(t_arrival) [m/s]: %.3f" % x_t_slope)
-    if len(us_seg) > 0:
-        print("Segment centers x [m]:", x_seg)
-        print("Segment shock speeds U_s [m/s]:", us_seg)
     if np.isfinite(us_attenuation_rate):
         print("Shock-speed attenuation dU_s/dx [(m/s)/m]: %.6f" % us_attenuation_rate)
     else:
         print("Shock-speed attenuation dU_s/dx [(m/s)/m]: unavailable (insufficient valid probe segments)")
-    if np.isfinite(us_percent_attenuation_rate):
-        print("Percent speed-change attenuation (slope/intercept*100) [%/m]: %.6f" % us_percent_attenuation_rate)
-    else:
-        print("Percent speed-change attenuation (slope/intercept*100) [%/m]: unavailable")
     if np.isfinite(ms_attenuation_rate):
         print("Mach attenuation dM_s/dx [1/m]: %.6f" % ms_attenuation_rate)
     else:
@@ -262,12 +249,9 @@ def main(
     plt.close("all")
     mpl.rcParams["font.size"] = fontsize
 
-    # Probe graphs in one figure
-    n_probe_plot = len(probe_locations)
-    fig, axes = plt.subplots(n_probe_plot, 1, figsize=(6.2, 2.25 * n_probe_plot + 1.0), sharex=True)
-    if n_probe_plot == 1:
-        axes = np.array([axes])
-    for i, probe in enumerate(ssbl.probes[:n_probe_plot]):
+    # 3 probe graphs in one figure
+    fig, axes = plt.subplots(3, 1, figsize=(6.2, 7.5), sharex=True)
+    for i, probe in enumerate(ssbl.probes):
         t_probe = np.array(probe.t)
         p_probe = np.array(probe.p)
         axes[i].plot(t_probe * 1000.0, p_probe / 1.0e5, "k", linewidth=1.7)
@@ -305,7 +289,6 @@ def main(
             shock_speed_segment=us_seg,
             shock_speed_attenuation_rate=us_attenuation_rate,
             shock_speed_attenuation_intercept=us_intercept,
-            shock_speed_percent_attenuation_rate=us_percent_attenuation_rate,
             shock_mach_segment=ms_seg,
             shock_mach_attenuation_rate=ms_attenuation_rate,
             shock_mach_attenuation_intercept=ms_intercept,
