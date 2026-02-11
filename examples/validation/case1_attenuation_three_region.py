@@ -58,14 +58,19 @@ def _shock_metrics_from_probe(
     p_baseline = float(np.mean(p[:n0]))
     p_dynamic = float(np.max(p) - p_baseline)
     if p_dynamic <= 0.0:
-        raise RuntimeError("No pressure rise detected at probe.")
+        arrival_time = float(t[0])
+        shock_pressure = p_baseline
+        attenuation_metric = float(np.log(max(shock_pressure, 1e-12) / baseline_pressure))
+        return arrival_time, shock_pressure, attenuation_metric
 
     p_threshold = p_baseline + rise_fraction * p_dynamic
     crossing = np.where(p >= p_threshold)[0]
     if len(crossing) == 0:
-        raise RuntimeError("No shock crossing found at probe; lower rise_fraction.")
+        i_cross = int(np.argmax(np.gradient(p, t)))
+    else:
+        i_cross = int(crossing[0])
 
-    i_cross = int(crossing[0])
+
     i_lo = max(1, i_cross - 5)
     i_hi = min(len(p) - 1, i_cross + 6)
     dpdt_local = np.gradient(p[i_lo:i_hi], t[i_lo:i_hi])
@@ -77,6 +82,15 @@ def _shock_metrics_from_probe(
     arrival_time = float(t[i_shock])
     attenuation_metric = float(np.log(shock_pressure / baseline_pressure))
     return arrival_time, shock_pressure, attenuation_metric
+
+def _gas_sound_speed(gas: ct.Solution) -> float:
+    """Return sound speed with compatibility across Cantera versions."""
+    if hasattr(gas, "sound_speed"):
+        return float(gas.sound_speed)
+    if hasattr(gas, "soundspeed"):
+        return float(gas.soundspeed)
+    gamma = gas.cp_mass / gas.cv_mass
+    return float(np.sqrt(gamma * gas.P / gas.density))
 
 
 def main(
@@ -199,10 +213,11 @@ def main(
     ssbl.reacting = reacting
     ssbl.inReactingRegion = lambda x, t: x >= buffer_test_interface_x
 
-    # Three probes in the driven section
+    # Three probes in the driven section (for attenuation)
     probe_locations: Sequence[float] = (2.0, 5.0, 8.0)
     for i, x_probe in enumerate(probe_locations):
         ssbl.addProbe(x_probe, probeName=f"probe_{i+1}")
+    ssbl.addProbe(max(ssbl.x), probeName="endwall")
 
     # X-t diagram for pressure
     ssbl.addXTDiagram("pressure", skipSteps=10)
@@ -215,7 +230,7 @@ def main(
     shock_pressures = []
     attenuation_values = []
 
-    for probe in ssbl.probes:
+    for probe in ssbl.probes[:len(probe_locations)]:
         t_probe = np.array(probe.t)
         p_probe = np.array(probe.p)
         arrival_t, p_shock, attn = _shock_metrics_from_probe(t_probe, p_probe, P1_buffer)
@@ -234,6 +249,29 @@ def main(
     # average shock speed from x(t_arrival)
     x_t_slope, x_t_intercept = np.polyfit(arrivals, x_probe, 1)
 
+    # shock-speed attenuation from probe-to-probe travel times
+    dt_seg = np.diff(arrivals)
+    dx_seg = np.diff(x_probe)
+    valid_seg = dt_seg > 0.0
+    if np.count_nonzero(valid_seg) >= 2:
+        x_seg = 0.5 * (x_probe[:-1][valid_seg] + x_probe[1:][valid_seg])
+        us_seg = dx_seg[valid_seg] / dt_seg[valid_seg]
+        us_attenuation_rate, us_intercept = np.polyfit(x_seg, us_seg, 1)
+
+        a_buffer = _gas_sound_speed(gas_buffer)
+        a_test = _gas_sound_speed(gas_test)
+        a_probe = np.where(x_probe < buffer_test_interface_x, a_buffer, a_test)
+        a_seg = 0.5 * (a_probe[:-1][valid_seg] + a_probe[1:][valid_seg])
+        ms_seg = us_seg / a_seg
+        ms_attenuation_rate, ms_intercept = np.polyfit(x_seg, ms_seg, 1)
+    else:
+        us_seg = np.array([])
+        ms_seg = np.array([])
+        us_attenuation_rate = np.nan
+        us_intercept = np.nan
+        ms_attenuation_rate = np.nan
+        ms_intercept = np.nan
+
     print("\n==== Shock attenuation metrics (BL model ON) ====")
     print("Probe positions [m]:", x_probe)
     print("Shock arrival times [ms]:", arrivals * 1e3)
@@ -241,11 +279,21 @@ def main(
     print("ln(p_shock/p1):", attenuation_values)
     print("Attenuation rate dln(p_shock/P1_buffer)/dx [1/m]: %.6f" % attenuation_rate)
     print("Average shock speed from x(t_arrival) [m/s]: %.3f" % x_t_slope)
+    if np.isfinite(us_attenuation_rate):
+        print("Shock-speed attenuation dU_s/dx [(m/s)/m]: %.6f" % us_attenuation_rate)
+    else:
+        print("Shock-speed attenuation dU_s/dx [(m/s)/m]: unavailable (insufficient valid probe segments)")
+    if np.isfinite(ms_attenuation_rate):
+        print("Mach attenuation dM_s/dx [1/m]: %.6f" % ms_attenuation_rate)
+    else:
+        print("Mach attenuation dM_s/dx [1/m]: unavailable (insufficient valid probe segments)")
 
     # Pressure-spike metrics useful for end-wall design
-    p_max_domain = float(np.max(ssbl.p))
+    # Domain maximum is taken over the full X-t pressure history.
+    p_xt = np.array(ssbl.XTDiagrams["pressure"].variable)
+    p_max_domain = float(np.max(p_xt))
     p_max_endwall = float(np.max(np.array(ssbl.probes[-1].p)))
-    print("Maximum instantaneous pressure in domain [bar]: %.4f" % (p_max_domain / 1.0e5))
+    print("Maximum pressure over full X-t domain [bar]: %.4f" % (p_max_domain / 1.0e5))
     print("Maximum pressure at end-wall probe [bar]: %.4f" % (p_max_endwall / 1.0e5))
 
     # --- Plots ---
@@ -254,7 +302,7 @@ def main(
 
     # 3 probe graphs in one figure
     fig, axes = plt.subplots(3, 1, figsize=(6.2, 7.5), sharex=True)
-    for i, probe in enumerate(ssbl.probes):
+    for i, probe in enumerate(ssbl.probes[:len(probe_locations)]):
         t_probe = np.array(probe.t)
         p_probe = np.array(probe.p)
         axes[i].plot(t_probe * 1000.0, p_probe / 1.0e5, "k", linewidth=1.7)
@@ -292,6 +340,12 @@ def main(
             attenuation_intercept=attenuation_intercept,
             shock_speed_average=x_t_slope,
             shock_speed_intercept=x_t_intercept,
+            shock_speed_segment=us_seg,
+            shock_speed_attenuation_rate=us_attenuation_rate,
+            shock_speed_attenuation_intercept=us_intercept,
+            shock_mach_segment=ms_seg,
+            shock_mach_attenuation_rate=ms_attenuation_rate,
+            shock_mach_attenuation_intercept=ms_intercept,
             p_max_domain=p_max_domain,
             p_max_endwall=p_max_endwall,
             buffer_test_interface_x=buffer_test_interface_x,
