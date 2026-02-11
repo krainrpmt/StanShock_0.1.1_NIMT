@@ -216,7 +216,6 @@ def main(
         p1,
     )
     us0_reference = reference_probe_x / t_ref if t_ref > 0.0 else np.nan
-
     # attenuation rate based on ln(p_shock/p1) vs x
     attenuation_rate, attenuation_intercept = np.polyfit(x_probe, attenuation_values, 1)
 
