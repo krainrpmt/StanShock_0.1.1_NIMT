@@ -372,6 +372,20 @@ def main(
     if len(us_seg) > 0:
         print("Segment centers x [m]:", x_seg)
         print("Segment shock speeds U_s [m/s]:", us_seg)
+    if Boundary_Layer_Model == True:
+        if np.isfinite(us_attenuation_rate):
+            print("Shock-speed attenuation dU_s/dx [(m/s)/m]: %.6f" % us_attenuation_rate)
+        else:
+            print("Shock-speed attenuation dU_s/dx [(m/s)/m]: unavailable (insufficient valid probe segments)")
+        if np.isfinite(us_percent_attenuation_rate):
+            print("Percent speed-change attenuation (slope/intercept*100) [%%/m]: %.6f" % us_percent_attenuation_rate)
+        else:
+            print("Percent speed-change attenuation (slope/intercept*100) [%%/m]: unavailable")
+        if np.isfinite(ms_attenuation_rate):
+            print("Mach attenuation dM_s/dx [1/m]: %.6f" % ms_attenuation_rate)
+        else:
+            print("Mach attenuation dM_s/dx [1/m]: unavailable (insufficient valid probe segments)")
+
     # --- Plots ---
     plt.close("all")
     mpl.rcParams["font.size"] = fontsize
@@ -419,6 +433,10 @@ def main(
 
     if show_results:
         plt.show()
+    else:
+        # In notebook/inline backends, open figures may still render at cell end
+        # even without plt.show(); close them explicitly when display is disabled.
+        plt.close("all")
 
     if results_location is not None:
         np.savez(
@@ -487,30 +505,6 @@ def main(
         "probe_t": probe_t,
         "probe_p": probe_p,
         "probe_rise_fraction": probe_rise_fraction,
-    }
-
-    return {
-        "solver": ssbl,
-        "gas1": gas1,
-        "gas4": gas4,
-        "probe_locations": x_probe,
-        "probe_arrival_times": arrivals,
-        "probe_shock_pressures": shock_pressures,
-        "probe_attenuation": attenuation_values,
-        "attenuation_rate": attenuation_rate,
-        "attenuation_intercept": attenuation_intercept,
-        "shock_speed_average": x_t_slope,
-        "shock_speed_intercept": x_t_intercept,
-        "shock_speed_segment": us_seg,
-        "shock_speed_attenuation_rate": us_attenuation_rate,
-        "shock_speed_attenuation_intercept": us_intercept,
-        "shock_speed_percent_attenuation_rate": us_percent_attenuation_rate,
-        "shock_mach_segment": ms_seg,
-        "shock_mach_attenuation_rate": ms_attenuation_rate,
-        "shock_mach_attenuation_intercept": ms_intercept,
-        "xt_time": np.array(ssbl.XTDiagrams["pressure"].t),
-        "xt_x": np.array(ssbl.XTDiagrams["pressure"].x),
-        "xt_pressure": np.array(ssbl.XTDiagrams["pressure"].variable),
     }
 
 
