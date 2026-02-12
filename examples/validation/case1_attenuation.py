@@ -54,16 +54,16 @@ def _shock_metrics_from_probe(
     if len(t) < 10:
         raise RuntimeError("Probe trace is too short to determine shock metrics.")
 
-    n0 = max(5, int(baseline_fraction * len(p)))
-    p_baseline = float(np.mean(p[:n0]))
-    p_dynamic = float(np.max(p) - p_baseline)
+    p_baseline, p_max, p_threshold = _probe_threshold_details(
+        p, rise_fraction=rise_fraction, baseline_fraction=baseline_fraction
+    )
+    p_dynamic = float(p_max - p_baseline)
     if p_dynamic <= 0.0:
         arrival_time = float(t[0])
         shock_pressure = p_baseline
         attenuation_metric = float(np.log(max(shock_pressure, 1e-12) / baseline_pressure))
         return arrival_time, shock_pressure, attenuation_metric
 
-    p_threshold = p_baseline + rise_fraction * p_dynamic
     crossing = np.where(p >= p_threshold)[0]
     if len(crossing) == 0:
         i_cross = int(np.argmax(np.gradient(p, t)))
@@ -82,6 +82,19 @@ def _shock_metrics_from_probe(
     arrival_time = float(t[i_shock])
     attenuation_metric = float(np.log(shock_pressure / baseline_pressure))
     return arrival_time, shock_pressure, attenuation_metric
+
+
+def _probe_threshold_details(
+    p: np.ndarray,
+    rise_fraction: float,
+    baseline_fraction: float,
+) -> Tuple[float, float, float]:
+    """Return (p_baseline, p_max, p_threshold) used by shock thresholding."""
+    n0 = max(5, int(baseline_fraction * len(p)))
+    p_baseline = float(np.mean(p[:n0]))
+    p_max = float(np.max(p))
+    p_threshold = float(p_baseline + rise_fraction * (p_max - p_baseline))
+    return p_baseline, p_max, p_threshold
 
 
 # placeholder: branch-reset marker for new PR workflow
@@ -316,6 +329,8 @@ def _plot_postprocessed_results(
     probe_locations: Sequence[float],
     metrics: Dict[str, Any],
     boundary_layer_model: bool,
+    rise_fraction: float,
+    baseline_fraction: float,
     fontsize: int = 11,
 ) -> Tuple[Any, Optional[Any]]:
     """Create probe and speed-fit plots from postprocessed data."""
@@ -340,6 +355,27 @@ def _plot_postprocessed_results(
         axes[i].axvline(arrivals[i] * 1000.0, color="r", linestyle="--", linewidth=1.2, label="shock arrival")
         axes[i].set_ylabel("p [bar]")
         axes[i].set_title("Probe %d at x = %.2f m" % (i + 1, probe_locations[i]))
+        p_baseline, p_max, p_threshold = _probe_threshold_details(
+            np.array(p_probe), rise_fraction=rise_fraction, baseline_fraction=baseline_fraction
+        )
+        axes[i].axhline(p_threshold / 1.0e5, color="tab:green", linestyle=":", linewidth=1.1, label="threshold")
+        details = (
+            f"rise_fraction={rise_fraction:.4f}\n"
+            f"baseline_fraction={baseline_fraction:.4f}\n"
+            f"p_max={p_max/1e5:.3f} bar\n"
+            f"p_baseline={p_baseline/1e5:.3f} bar\n"
+            f"p_threshold={p_threshold/1e5:.3f} bar"
+        )
+        axes[i].text(
+            0.99,
+            0.02,
+            details,
+            transform=axes[i].transAxes,
+            ha="right",
+            va="bottom",
+            fontsize=8,
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.75, edgecolor="0.7"),
+        )
         axes[i].grid(alpha=0.25)
         axes[i].legend(loc="upper right")
     axes[-1].set_xlabel("t [ms]")
@@ -422,6 +458,8 @@ def postprocess_cached_results(
         probe_locations=selected_probe_locations,
         metrics=metrics,
         boundary_layer_model=effective_boundary_layer_model,
+        rise_fraction=rise_fraction,
+        baseline_fraction=baseline_fraction,
     )
 
     if show_results:
