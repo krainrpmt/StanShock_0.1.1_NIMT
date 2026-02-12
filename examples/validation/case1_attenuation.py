@@ -308,9 +308,9 @@ def _prepare_results_dir(results_location: Optional[str]) -> Path:
     return out_dir
 
 
-def _cache_file_path(results_location: Optional[str]) -> Path:
+def _cache_file_path(results_location: Optional[str], case_name: str = "case1") -> Path:
     """Canonical cached results file path used for post-processing."""
-    return _prepare_results_dir(results_location) / "case1_attenuation.npz"
+    return _prepare_results_dir(results_location) / f"{case_name}_attenuation.npz"
 
 def _gas_sound_speed(gas: ct.Solution) -> float:
     """Return sound speed with compatibility across Cantera versions."""
@@ -417,8 +417,42 @@ def _plot_postprocessed_results(
     return fig, fig_speed
 
 
+
+
+def _plot_xt_from_cached_fields(
+    xt_time: np.ndarray,
+    xt_x: np.ndarray,
+    xt_pressure: np.ndarray,
+    xt_density: Optional[np.ndarray] = None,
+    xt_temperature: Optional[np.ndarray] = None,
+) -> None:
+    """Plot X-t diagrams directly from cached arrays."""
+    def _plot_one(field: np.ndarray, title: str) -> None:
+        arr = np.array(field)
+        if arr.shape == (len(xt_time), len(xt_x)):
+            z = arr
+        elif arr.shape == (len(xt_x), len(xt_time)):
+            z = arr.T
+        else:
+            raise ValueError(f"Unexpected X-t shape for {title}: {arr.shape}")
+        x_mesh, t_mesh = np.meshgrid(xt_x, xt_time * 1000.0)
+        plt.figure(figsize=(6.2, 4.0))
+        plt.pcolormesh(x_mesh, t_mesh, z, shading="auto")
+        plt.xlabel("x [m]")
+        plt.ylabel("t [ms]")
+        plt.title(title)
+        plt.colorbar()
+        plt.tight_layout()
+
+    _plot_one(xt_pressure, "Pressure X-t diagram (pressure)")
+    if xt_density is not None:
+        _plot_one(xt_density, "Pressure X-t diagram (density)")
+    if xt_temperature is not None:
+        _plot_one(xt_temperature, "Pressure X-t diagram (temperature)")
+
 def postprocess_cached_results(
     results_location: Optional[str] = None,
+    case_name: str = "case1",
     probe_locations: Optional[Sequence[float]] = None,
     rise_fraction: float = 0.03,
     baseline_fraction: float = 0.05,
@@ -426,11 +460,13 @@ def postprocess_cached_results(
     boundary_layer_model: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """Post-process already-cached CFD results with optional redefined probe locations."""
-    cache_file = _cache_file_path(results_location)
+    cache_file = _cache_file_path(results_location, case_name=case_name)
     with np.load(cache_file, allow_pickle=True) as data:
         xt_time = np.array(data["xt_time"])
         xt_x = np.array(data["xt_x"])
         xt_pressure = np.array(data["xt_pressure"])
+        xt_density = np.array(data["xt_density"]) if "xt_density" in data else None
+        xt_temperature = np.array(data["xt_temperature"]) if "xt_temperature" in data else None
         cached_probe_locations = np.array(data["probe_locations"])
         T1 = float(data["T1"]) if "T1" in data else np.nan
         P1 = float(data["P1"]) if "P1" in data else np.nan
@@ -495,18 +531,20 @@ def postprocess_cached_results(
         xt_time=xt_time,
         xt_x=xt_x,
         xt_pressure=xt_pressure,
+        xt_density=xt_density,
+        xt_temperature=xt_temperature,
         probe_t=np.array(probe_t, dtype=object),
         probe_p=np.array(probe_p, dtype=object),
         probe_rise_fraction=rise_fraction,
         probe_baseline_fraction=baseline_fraction,
         sound_speed_a1=sound_speed_a1,
     )
-    fig.savefig(results_dir / "case1_attenuation_probes.png", dpi=200)
+    fig.savefig(results_dir / f"{case_name}_attenuation_probes.png", dpi=200)
     if fig_speed is not None:
-        fig_speed.savefig(results_dir / "case1_attenuation_speed_fit.png", dpi=200)
+        fig_speed.savefig(results_dir / f"{case_name}_attenuation_speed_fit.png", dpi=200)
 
     out = dict(metrics)
-    out.update({"xt_time": xt_time, "xt_x": xt_x, "xt_pressure": xt_pressure, "probe_t": probe_t, "probe_p": probe_p})
+    out.update({"xt_time": xt_time, "xt_x": xt_x, "xt_pressure": xt_pressure, "xt_density": xt_density, "xt_temperature": xt_temperature, "probe_t": probe_t, "probe_p": probe_p})
     return out
 
 def main(
@@ -528,6 +566,7 @@ def main(
     probe_locations: Sequence[float] = (0.5,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.47),
     probe_rise_fraction: float = 0.03,
     probe_baseline_fraction: float = 0.05,
+    case_name: str = "case1",
     expose_results_to_globals: bool = False,
 
 ) -> Dict[str, Any]:
@@ -633,7 +672,7 @@ def main(
     results_dir = _prepare_results_dir(results_location)
 
     np.savez(
-        results_dir / "case1_attenuation.npz",
+        results_dir / f"{case_name}_attenuation.npz",
         probe_locations=np.array(probe_locations),
         T1=T1,
         P1=P1,
@@ -642,6 +681,8 @@ def main(
         xt_time=np.array(ssbl.XTDiagrams["pressure"].t),
         xt_x=np.array(ssbl.XTDiagrams["pressure"].x),
         xt_pressure=np.array(ssbl.XTDiagrams["pressure"].variable),
+        xt_density=np.array(ssbl.XTDiagrams["density"].variable),
+        xt_temperature=np.array(ssbl.XTDiagrams["temperature"].variable),
         probe_t=np.array(probe_t, dtype=object),
         probe_p=np.array(probe_p, dtype=object),
         probe_rise_fraction=probe_rise_fraction,
@@ -652,6 +693,7 @@ def main(
 
     post = postprocess_cached_results(
         results_location=str(results_dir),
+        case_name=case_name,
         probe_locations=probe_locations,
         rise_fraction=probe_rise_fraction,
         baseline_fraction=probe_baseline_fraction,
