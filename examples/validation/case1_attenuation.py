@@ -98,15 +98,17 @@ def main(
     mech_filename_gas_4: str = "gri30_He.yaml",
     show_results: bool = True,
     results_location: Optional[str] = None,
-    t_final: float = 10e-3,
+    t_final: float = 30e-3,
     n_x: int = 1000,
     cfl: float = 0.9,
     T1: float = 296.15,
-    P1: float = 10000,
+    P1: float = 20000,
     T4: float = 296.15,
-    P4: float = 648000,
-    X1: Optional[str] = 'H2:9.5, O2:19, N2:71.5',
-    X4: Optional[str] = 'HE:99.9348 ,AR:0.0652'
+    P4: float = 110400,
+    X1: Optional[str] = 'H2:4, O2:2, Ar:94', #4PctH2_2PctO2_94PctAr
+    X4: Optional[str] = 'He:58.8971, Ar:41.1029', #'He:21.8787, N2:78.1213'
+    Boundary_Layer_Model: bool = True,
+    probe_locations: Sequence[float] = (0.5,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.47)
 
 ) -> None:
     ct.add_directory(PROJECT_DIR)
@@ -139,7 +141,15 @@ def main(
         gas4.TPX = T4, P4, X4
 
     print(gas1())
+    gas1_gamma = gas1.cp_mass/gas1.cv_mass
+    print(gas1.cp_mass)
+    print(gas1.cv_mass)
+    print(gas1_gamma)
     print(gas4())
+    gas4_gamma = gas4.cp_mass / gas4.cv_mass
+    print(gas4.cp_mass)
+    print(gas4.cv_mass)
+    print(gas4_gamma)
 
     # set up geometry
     nX = n_x  # mesh resolution
@@ -166,8 +176,12 @@ def main(
     dAdx = lambda x: np.pi / 2.0 * D(x) * dDdx(x)
     dlnAdx = lambda x, t: dAdx(x) / A(x)
 
-    # Turn ON boundary-layer model as requested
-    print("Solving with boundary layer terms")
+    if Boundary_Layer_Model == True:
+        # Turn ON boundary-layer model as requested
+        print("Solving with boundary layer model")
+    else:
+        print("Solving without boundary layer model")
+
     boundaryConditions = ["reflecting", "reflecting"]
     state1 = (gas1, u1)
     state4 = (gas4, u4)
@@ -177,21 +191,21 @@ def main(
         boundaryConditions=boundaryConditions,
         cfl=cfl,
         outputEvery=100,
-        includeBoundaryLayerTerms=False,
+        includeBoundaryLayerTerms=Boundary_Layer_Model,
         DOuter=D,
         Tw=T1,  # assume wall temperature is in thermal eq. with gas
         dlnAdx=dlnAdx,
     )
 
     # Attenuation probes in the driven section
-    probe_locations: Sequence[float] = (1.0,2.0,3.0,4.0,5.0,5.47)
     for i, x_probe in enumerate(probe_locations):
         ssbl.addProbe(x_probe, probeName=f"probe_{i+1}")
 
 
     # X-t diagram for pressure
     ssbl.addXTDiagram("pressure", skipSteps=10)
-
+    ssbl.addXTDiagram("density", skipSteps=10)
+    ssbl.addXTDiagram("temperature", skipSteps=10)
     # Solve
     ssbl.advanceSimulation(tFinal)
 
@@ -244,30 +258,31 @@ def main(
         ms_intercept = np.nan
         us_percent_attenuation_rate = np.nan
 
-    print("\n==== Shock attenuation metrics (BL model ON) ====")
+    print("\n==== Shock Probes ====")
     print("Initial state driven  (T1 [K], P1 [Pa]):", (T1, P1))
     print("Initial state driver  (T4 [K], P4 [Pa]):", (T4, P4))
     print("Probe positions [m]:", x_probe)
     print("Shock arrival times [ms]:", arrivals * 1e3)
     print("Shock pressures [bar]:", shock_pressures / 1e5)
-    print("ln(p_shock/p1):", attenuation_values)
-    print("Attenuation rate dln(p_shock/P1)/dx [1/m]: %.6f" % attenuation_rate)
+    #print("ln(p_shock/p1):", attenuation_values)
+    #print("Attenuation rate dln(p_shock/P1)/dx [1/m]: %.6f" % attenuation_rate)
     print("Average shock speed from x(t_arrival) [m/s]: %.3f" % x_t_slope)
     if len(us_seg) > 0:
         print("Segment centers x [m]:", x_seg)
         print("Segment shock speeds U_s [m/s]:", us_seg)
-    if np.isfinite(us_attenuation_rate):
-        print("Shock-speed attenuation dU_s/dx [(m/s)/m]: %.6f" % us_attenuation_rate)
-    else:
-        print("Shock-speed attenuation dU_s/dx [(m/s)/m]: unavailable (insufficient valid probe segments)")
-    if np.isfinite(us_percent_attenuation_rate):
-        print("Percent speed-change attenuation (slope/intercept*100) [%%/m]: %.6f" % us_percent_attenuation_rate)
-    else:
-        print("Percent speed-change attenuation (slope/intercept*100) [%%/m]: unavailable")
-    if np.isfinite(ms_attenuation_rate):
-        print("Mach attenuation dM_s/dx [1/m]: %.6f" % ms_attenuation_rate)
-    else:
-        print("Mach attenuation dM_s/dx [1/m]: unavailable (insufficient valid probe segments)")
+    if Boundary_Layer_Model == True:
+        if np.isfinite(us_attenuation_rate):
+            print("Shock-speed attenuation dU_s/dx [(m/s)/m]: %.6f" % us_attenuation_rate)
+        else:
+            print("Shock-speed attenuation dU_s/dx [(m/s)/m]: unavailable (insufficient valid probe segments)")
+        if np.isfinite(us_percent_attenuation_rate):
+            print("Percent speed-change attenuation (slope/intercept*100) [%%/m]: %.6f" % us_percent_attenuation_rate)
+        else:
+            print("Percent speed-change attenuation (slope/intercept*100) [%%/m]: unavailable")
+        if np.isfinite(ms_attenuation_rate):
+            print("Mach attenuation dM_s/dx [1/m]: %.6f" % ms_attenuation_rate)
+        else:
+            print("Mach attenuation dM_s/dx [1/m]: unavailable (insufficient valid probe segments)")
 
     # --- Plots ---
     plt.close("all")
@@ -288,15 +303,30 @@ def main(
         axes[i].grid(alpha=0.25)
         axes[i].legend(loc="upper right")
     axes[-1].set_xlabel("t [ms]")
-    fig.suptitle(
-        "Case 1 (Boundary Layer ON)\nAttenuation rate dln(p_shock/P1)/dx = %.4f 1/m" % attenuation_rate,
-        y=0.995,
-    )
-    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    if Boundary_Layer_Model == True:
+        fig.suptitle(
+            "(Boundary Layer ON)\nShock attenuation rate (Shock Speed) [%%/m]: %.6f" % us_percent_attenuation_rate,
+            y=0.995,
+        )
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
+    else:
+        fig.suptitle(
+            "(Boundary Layer OFF)",
+            y=0.995,
+        )
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
 
     # X-t diagram for pressure
     ssbl.plotXTDiagram(ssbl.XTDiagrams["pressure"])
-    plt.title("Pressure X-t diagram (Boundary Layer ON)")
+    plt.title("Pressure X-t diagram (pressure)")
+    plt.tight_layout()
+
+    ssbl.plotXTDiagram(ssbl.XTDiagrams["density"])
+    plt.title("Pressure X-t diagram (density)")
+    plt.tight_layout()
+
+    ssbl.plotXTDiagram(ssbl.XTDiagrams["temperature"])
+    plt.title("Pressure X-t diagram (temperature)")
     plt.tight_layout()
 
     if show_results:
