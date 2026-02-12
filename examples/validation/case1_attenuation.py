@@ -17,7 +17,6 @@
     You should have received a copy of the GNU Lesser General Public License
     along with StanShock.  If not, see <https://www.gnu.org/licenses/>.
 '''
-import os.path
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -29,6 +28,7 @@ from matplotlib import pyplot as plt
 from StanShock.stanShock import stanShock
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
+DEFAULT_RESULTS_DIR = Path(__file__).resolve().parent / "SOD + BL Simulation Output"
 
 
 def _shock_metrics_from_probe(
@@ -182,14 +182,72 @@ def postprocess_probe_traces(
     }
 
 
-def postprocess_probe_file(raw_results_file: str, rise_fraction: float = 0.03) -> Dict[str, Any]:
-    """Load raw probe traces from disk and recompute shock metrics offline."""
+def reconstruct_probe_traces_from_xt(
+    xt_time: np.ndarray,
+    xt_x: np.ndarray,
+    xt_pressure: np.ndarray,
+    probe_locations: Sequence[float],
+) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """Reconstruct pressure-time traces at arbitrary x from cached X-t pressure data."""
+    xt_time = np.asarray(xt_time)
+    xt_x = np.asarray(xt_x)
+    p_xt = np.asarray(xt_pressure)
+
+    if xt_time.ndim != 1 or xt_x.ndim != 1:
+        raise ValueError("xt_time and xt_x must be one-dimensional arrays")
+    if p_xt.ndim != 2:
+        raise ValueError("xt_pressure must be a 2D array")
+
+    if p_xt.shape == (len(xt_time), len(xt_x)):
+        p_t_x = p_xt
+    elif p_xt.shape == (len(xt_x), len(xt_time)):
+        p_t_x = p_xt.T
+    else:
+        raise ValueError(
+            "xt_pressure shape must be (n_time, n_x) or (n_x, n_time). "
+            f"Received {p_xt.shape}."
+        )
+
+    probe_times = [xt_time.copy() for _ in probe_locations]
+    probe_pressures = []
+
+    x_min = float(np.min(xt_x))
+    x_max = float(np.max(xt_x))
+    for x_probe in probe_locations:
+        xq = float(np.clip(x_probe, x_min, x_max))
+        p_probe = np.array([
+            np.interp(xq, xt_x, p_t_x[i, :], left=p_t_x[i, 0], right=p_t_x[i, -1])
+            for i in range(len(xt_time))
+        ])
+        probe_pressures.append(p_probe)
+
+    return probe_times, probe_pressures
+
+
+def postprocess_probe_file(
+    raw_results_file: str,
+    rise_fraction: float = 0.03,
+    probe_locations: Optional[Sequence[float]] = None,
+) -> Dict[str, Any]:
+    """Load cached results from disk and recompute shock metrics offline.
+
+    If ``probe_locations`` is provided and X-t pressure data exists in the cache,
+    probe traces are reconstructed at the new positions from the X-t field.
+    """
     with np.load(raw_results_file, allow_pickle=True) as data:
-        probe_times = [np.array(t) for t in data["probe_t"]]
-        probe_pressures = [np.array(p) for p in data["probe_p"]]
-        probe_locations = np.array(data["probe_locations"])
+        cached_probe_locations = np.array(data["probe_locations"])
         baseline_pressure = float(data["P1"])
         sound_speed_a1 = float(data["sound_speed_a1"]) if "sound_speed_a1" in data else None
+
+        if probe_locations is not None and all(k in data for k in ("xt_time", "xt_x", "xt_pressure")):
+            probe_locations = np.array(probe_locations, dtype=float)
+            probe_times, probe_pressures = reconstruct_probe_traces_from_xt(
+                data["xt_time"], data["xt_x"], data["xt_pressure"], probe_locations
+            )
+        else:
+            probe_times = [np.array(t) for t in data["probe_t"]]
+            probe_pressures = [np.array(p) for p in data["probe_p"]]
+            probe_locations = cached_probe_locations
 
     return postprocess_probe_traces(
         probe_times=probe_times,
@@ -201,6 +259,19 @@ def postprocess_probe_file(raw_results_file: str, rise_fraction: float = 0.03) -
         rise_fraction=rise_fraction,
         sound_speed_a1=sound_speed_a1,
     )
+
+
+
+def _prepare_results_dir(results_location: Optional[str]) -> Path:
+    """Return cache/output directory and ensure it exists."""
+    out_dir = DEFAULT_RESULTS_DIR if results_location is None else Path(results_location)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir
+
+
+def _cache_file_path(results_location: Optional[str]) -> Path:
+    """Canonical cached results file path used for post-processing."""
+    return _prepare_results_dir(results_location) / "case1_attenuation.npz"
 
 def _gas_sound_speed(gas: ct.Solution) -> float:
     """Return sound speed with compatibility across Cantera versions."""
@@ -318,10 +389,9 @@ def main(
         dlnAdx=dlnAdx,
     )
 
-    # Attenuation probes in the driven section
+    # Keep physical probes for optional diagnostics/compatibility.
     for i, x_probe in enumerate(probe_locations):
         ssbl.addProbe(x_probe, probeName=f"probe_{i+1}")
-
 
     # X-t diagram for pressure
     ssbl.addXTDiagram("pressure", skipSteps=10)
@@ -330,17 +400,39 @@ def main(
     # Solve
     ssbl.advanceSimulation(tFinal)
 
-    # --- Save raw traces once, then post-process probe behavior offline ---
+    # --- Always cache CFD outputs, then always post-process from cached file ---
     probe_t, probe_p = _collect_probe_traces(ssbl, len(probe_locations))
-    metrics = postprocess_probe_traces(
-        probe_times=probe_t,
-        probe_pressures=probe_p,
-        probe_locations=probe_locations,
-        baseline_pressure=P1,
-        gas1=gas1,
-        boundary_layer_model=Boundary_Layer_Model,
-        rise_fraction=probe_rise_fraction,
+    results_dir = _prepare_results_dir(results_location)
+
+    np.savez(
+        results_dir / "case1_attenuation.npz",
+        probe_locations=np.array(probe_locations),
+        T1=T1,
+        P1=P1,
+        T4=T4,
+        P4=P4,
+        xt_time=np.array(ssbl.XTDiagrams["pressure"].t),
+        xt_x=np.array(ssbl.XTDiagrams["pressure"].x),
+        xt_pressure=np.array(ssbl.XTDiagrams["pressure"].variable),
+        probe_t=np.array(probe_t, dtype=object),
+        probe_p=np.array(probe_p, dtype=object),
+        probe_rise_fraction=probe_rise_fraction,
         sound_speed_a1=_gas_sound_speed(gas1),
+    )
+
+    # Always compute metrics from cached file (supports probe changes without rerunning CFD).
+    metrics = postprocess_probe_file(
+        str(results_dir / "case1_attenuation.npz"),
+        rise_fraction=probe_rise_fraction,
+        probe_locations=probe_locations,
+    )
+
+    # Reconstruct probe traces used for plotting from cached X-t field.
+    probe_t, probe_p = reconstruct_probe_traces_from_xt(
+        np.array(ssbl.XTDiagrams["pressure"].t),
+        np.array(ssbl.XTDiagrams["pressure"].x),
+        np.array(ssbl.XTDiagrams["pressure"].variable),
+        probe_locations,
     )
 
     x_probe = metrics["probe_locations"]
@@ -395,9 +487,9 @@ def main(
     fig, axes = plt.subplots(n_probe_plot, 1, figsize=(6.2, 2.25 * n_probe_plot + 1.0), sharex=True)
     if n_probe_plot == 1:
         axes = np.array([axes])
-    for i, probe in enumerate(ssbl.probes[:n_probe_plot]):
-        t_probe = np.array(probe.t)
-        p_probe = np.array(probe.p)
+    for i in range(n_probe_plot):
+        t_probe = np.array(probe_t[i])
+        p_probe = np.array(probe_p[i])
         axes[i].plot(t_probe * 1000.0, p_probe / 1.0e5, "k", linewidth=1.7)
         axes[i].axvline(arrivals[i] * 1000.0, color="r", linestyle="--", linewidth=1.2, label="shock arrival")
         axes[i].set_ylabel("p [bar]")
@@ -431,6 +523,30 @@ def main(
     plt.title("Pressure X-t diagram (temperature)")
     plt.tight_layout()
 
+    fig_speed = None
+    if len(x_seg) > 0:
+        fig_speed = plt.figure(figsize=(6.2, 4.0))
+        plt.plot(x_seg, us_seg, "o", color="tab:blue", label="Segment speed")
+        if np.isfinite(us_attenuation_rate) and np.isfinite(us_intercept):
+            x_fit = np.linspace(np.min(x_seg), np.max(x_seg), 100)
+            u_fit = us_attenuation_rate * x_fit + us_intercept
+            plt.plot(
+                x_fit,
+                u_fit,
+                "--",
+                color="tab:red",
+                label=(
+                    "Linear fit: $U_s = m x + b$\n"
+                    f"m={us_attenuation_rate:.3f} (m/s)/m, b={us_intercept:.3f} m/s"
+                ),
+            )
+        plt.xlabel("Segment center x [m]")
+        plt.ylabel("Probed speed U_s [m/s]")
+        plt.title("Probed Speed vs Segment Centers")
+        plt.grid(alpha=0.25)
+        plt.legend(loc="best")
+        plt.tight_layout()
+
     if show_results:
         plt.show()
     else:
@@ -438,47 +554,49 @@ def main(
         # even without plt.show(); close them explicitly when display is disabled.
         plt.close("all")
 
-    if results_location is not None:
-        np.savez(
-            os.path.join(results_location, "case1_attenuation.npz"),
-            probe_locations=x_probe,
-            probe_arrival_times=arrivals,
-            probe_shock_pressures=shock_pressures,
-            probe_attenuation=attenuation_values,
-            T1=T1,
-            P1=P1,
-            T4=T4,
-            P4=P4,
-            attenuation_rate=attenuation_rate,
-            attenuation_intercept=attenuation_intercept,
-            shock_speed_average=x_t_slope,
-            shock_speed_intercept=x_t_intercept,
-            shock_speed_segment=us_seg,
-            shock_speed_attenuation_rate=us_attenuation_rate,
-            shock_speed_attenuation_intercept=us_intercept,
-            shock_speed_percent_attenuation_rate=us_percent_attenuation_rate,
-            shock_mach_segment=ms_seg,
-            shock_mach_attenuation_rate=ms_attenuation_rate,
-            shock_mach_attenuation_intercept=ms_intercept,
-            xt_time=np.array(ssbl.XTDiagrams["pressure"].t),
-            xt_x=np.array(ssbl.XTDiagrams["pressure"].x),
-            xt_pressure=np.array(ssbl.XTDiagrams["pressure"].variable),
-            probe_t=np.array(probe_t, dtype=object),
-            probe_p=np.array(probe_p, dtype=object),
-            probe_rise_fraction=probe_rise_fraction,
-            sound_speed_a1=_gas_sound_speed(gas1),
-        )
-        fig.savefig(os.path.join(results_location, "case1_attenuation_probes.png"), dpi=200)
-        plt.figure(2)
-        plt.savefig(os.path.join(results_location, "case1_attenuation_xt.png"), dpi=200)
-        np.savez(
-            os.path.join(results_location, "case1_attenuation_raw_traces.npz"),
-            probe_locations=np.array(probe_locations),
-            probe_t=np.array(probe_t, dtype=object),
-            probe_p=np.array(probe_p, dtype=object),
-            P1=P1,
-            sound_speed_a1=_gas_sound_speed(gas1),
-        )
+    np.savez(
+        results_dir / "case1_attenuation.npz",
+        probe_locations=x_probe,
+        probe_arrival_times=arrivals,
+        probe_shock_pressures=shock_pressures,
+        probe_attenuation=attenuation_values,
+        T1=T1,
+        P1=P1,
+        T4=T4,
+        P4=P4,
+        attenuation_rate=attenuation_rate,
+        attenuation_intercept=attenuation_intercept,
+        shock_speed_average=x_t_slope,
+        shock_speed_intercept=x_t_intercept,
+        shock_speed_segment_centers=x_seg,
+        shock_speed_segment=us_seg,
+        shock_speed_attenuation_rate=us_attenuation_rate,
+        shock_speed_attenuation_intercept=us_intercept,
+        shock_speed_percent_attenuation_rate=us_percent_attenuation_rate,
+        shock_mach_segment=ms_seg,
+        shock_mach_attenuation_rate=ms_attenuation_rate,
+        shock_mach_attenuation_intercept=ms_intercept,
+        xt_time=np.array(ssbl.XTDiagrams["pressure"].t),
+        xt_x=np.array(ssbl.XTDiagrams["pressure"].x),
+        xt_pressure=np.array(ssbl.XTDiagrams["pressure"].variable),
+        probe_t=np.array(probe_t, dtype=object),
+        probe_p=np.array(probe_p, dtype=object),
+        probe_rise_fraction=probe_rise_fraction,
+        sound_speed_a1=_gas_sound_speed(gas1),
+    )
+    fig.savefig(results_dir / "case1_attenuation_probes.png", dpi=200)
+    plt.figure(2)
+    plt.savefig(results_dir / "case1_attenuation_xt.png", dpi=200)
+    if fig_speed is not None:
+        fig_speed.savefig(results_dir / "case1_attenuation_speed_fit.png", dpi=200)
+    np.savez(
+        results_dir / "case1_attenuation_raw_traces.npz",
+        probe_locations=np.array(probe_locations),
+        probe_t=np.array(probe_t, dtype=object),
+        probe_p=np.array(probe_p, dtype=object),
+        P1=P1,
+        sound_speed_a1=_gas_sound_speed(gas1),
+    )
 
     return {
         "solver": ssbl,
@@ -492,6 +610,7 @@ def main(
         "attenuation_intercept": attenuation_intercept,
         "shock_speed_average": x_t_slope,
         "shock_speed_intercept": x_t_intercept,
+        "shock_speed_segment_centers": x_seg,
         "shock_speed_segment": us_seg,
         "shock_speed_attenuation_rate": us_attenuation_rate,
         "shock_speed_attenuation_intercept": us_intercept,
