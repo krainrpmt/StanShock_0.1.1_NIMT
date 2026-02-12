@@ -48,8 +48,8 @@ def _shock_metrics_from_probe(
        This intentionally allows detection of a *small first step* (incident shock)
        even when a larger reflected-shock jump appears later.
     3) Pick the first time index where pressure crosses p_threshold.
-    4) Refine arrival to the strongest local dp/dt near that crossing.
-    5) Compute shock pressure as the short-window mean right after arrival.
+    4) Interpolate threshold-crossing time between adjacent samples.
+    5) Compute shock pressure as the short-window mean right after crossing.
     """
     if len(t) < 10:
         raise RuntimeError("Probe trace is too short to determine shock metrics.")
@@ -67,19 +67,20 @@ def _shock_metrics_from_probe(
     crossing = np.where(p >= p_threshold)[0]
     if len(crossing) == 0:
         i_cross = int(np.argmax(np.gradient(p, t)))
+        arrival_time = float(t[i_cross])
     else:
         i_cross = int(crossing[0])
+        if i_cross > 0 and p[i_cross] != p[i_cross - 1]:
+            # Interpolate threshold-crossing time so the arrival marker matches
+            # the plotted threshold criterion (p >= p_threshold) more faithfully.
+            frac = (p_threshold - p[i_cross - 1]) / (p[i_cross] - p[i_cross - 1])
+            arrival_time = float(t[i_cross - 1] + frac * (t[i_cross] - t[i_cross - 1]))
+        else:
+            arrival_time = float(t[i_cross])
 
-
-    i_lo = max(1, i_cross - 5)
-    i_hi = min(len(p) - 1, i_cross + 6)
-    dpdt_local = np.gradient(p[i_lo:i_hi], t[i_lo:i_hi])
-    i_shock = i_lo + int(np.argmax(dpdt_local))
-
-    i1 = i_shock
-    i2 = min(len(p), i_shock + 6)
+    i1 = i_cross
+    i2 = min(len(p), i_cross + 6)
     shock_pressure = float(np.mean(p[i1:i2]))
-    arrival_time = float(t[i_shock])
     attenuation_metric = float(np.log(shock_pressure / baseline_pressure))
     return arrival_time, shock_pressure, attenuation_metric
 
