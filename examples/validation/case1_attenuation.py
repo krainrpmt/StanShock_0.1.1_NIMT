@@ -36,6 +36,7 @@ def _shock_metrics_from_probe(
     p: np.ndarray,
     baseline_pressure: float,
     rise_fraction: float = 0.03,
+    baseline_fraction: float = 0.05,
 ) -> Tuple[float, float, float]:
     """
     Extract incident-shock arrival and strength from a probe trace.
@@ -53,7 +54,7 @@ def _shock_metrics_from_probe(
     if len(t) < 10:
         raise RuntimeError("Probe trace is too short to determine shock metrics.")
 
-    n0 = max(5, int(0.05 * len(p)))
+    n0 = max(5, int(baseline_fraction * len(p)))
     p_baseline = float(np.mean(p[:n0]))
     p_dynamic = float(np.max(p) - p_baseline)
     if p_dynamic <= 0.0:
@@ -101,6 +102,7 @@ def _extract_shock_metrics_for_all_probes(
     probe_pressures: Sequence[np.ndarray],
     baseline_pressure: float,
     rise_fraction: float,
+    baseline_fraction: float,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Apply single-probe shock capture to each probe trace."""
     arrivals = []
@@ -109,7 +111,7 @@ def _extract_shock_metrics_for_all_probes(
 
     for t_probe, p_probe in zip(probe_times, probe_pressures):
         arrival_t, p_shock, attn = _shock_metrics_from_probe(
-            t_probe, p_probe, baseline_pressure, rise_fraction=rise_fraction
+            t_probe, p_probe, baseline_pressure, rise_fraction=rise_fraction, baseline_fraction=baseline_fraction
         )
         arrivals.append(arrival_t)
         shock_pressures.append(p_shock)
@@ -125,6 +127,7 @@ def postprocess_probe_traces(
     gas1: Optional[ct.Solution],
     boundary_layer_model: bool,
     rise_fraction: float = 0.03,
+    baseline_fraction: float = 0.05,
     sound_speed_a1: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Post-process probe arrays after single-probe shock capture.
@@ -139,6 +142,7 @@ def postprocess_probe_traces(
         probe_pressures=probe_pressures,
         baseline_pressure=baseline_pressure,
         rise_fraction=rise_fraction,
+        baseline_fraction=baseline_fraction,
     )
 
     attenuation_rate, attenuation_intercept = np.polyfit(x_probe, attenuation_values, 1)
@@ -246,6 +250,7 @@ def reconstruct_probe_traces_from_xt(
 def postprocess_probe_file(
     raw_results_file: str,
     rise_fraction: float = 0.03,
+    baseline_fraction: float = 0.05,
     probe_locations: Optional[Sequence[float]] = None,
 ) -> Dict[str, Any]:
     """Load cached results from disk and recompute shock metrics offline.
@@ -276,6 +281,7 @@ def postprocess_probe_file(
         gas1=None,
         boundary_layer_model=True,
         rise_fraction=rise_fraction,
+        baseline_fraction=baseline_fraction,
         sound_speed_a1=sound_speed_a1,
     )
 
@@ -378,6 +384,7 @@ def postprocess_cached_results(
     results_location: Optional[str] = None,
     probe_locations: Optional[Sequence[float]] = None,
     rise_fraction: float = 0.03,
+    baseline_fraction: float = 0.05,
     show_results: bool = True,
     boundary_layer_model: Optional[bool] = None,
 ) -> Dict[str, Any]:
@@ -401,6 +408,7 @@ def postprocess_cached_results(
     metrics = postprocess_probe_file(
         str(cache_file),
         rise_fraction=rise_fraction,
+        baseline_fraction=baseline_fraction,
         probe_locations=selected_probe_locations,
     )
 
@@ -451,6 +459,7 @@ def postprocess_cached_results(
         probe_t=np.array(probe_t, dtype=object),
         probe_p=np.array(probe_p, dtype=object),
         probe_rise_fraction=rise_fraction,
+        probe_baseline_fraction=baseline_fraction,
         sound_speed_a1=sound_speed_a1,
     )
     fig.savefig(results_dir / "case1_attenuation_probes.png", dpi=200)
@@ -479,6 +488,7 @@ def main(
     Boundary_Layer_Model: bool = True,
     probe_locations: Sequence[float] = (0.5,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.47),
     probe_rise_fraction: float = 0.03,
+    probe_baseline_fraction: float = 0.05,
     expose_results_to_globals: bool = False,
 
 ) -> Dict[str, Any]:
@@ -596,6 +606,7 @@ def main(
         probe_t=np.array(probe_t, dtype=object),
         probe_p=np.array(probe_p, dtype=object),
         probe_rise_fraction=probe_rise_fraction,
+        probe_baseline_fraction=probe_baseline_fraction,
         sound_speed_a1=_gas_sound_speed(gas1),
         Boundary_Layer_Model=Boundary_Layer_Model,
     )
@@ -604,6 +615,7 @@ def main(
         results_location=str(results_dir),
         probe_locations=probe_locations,
         rise_fraction=probe_rise_fraction,
+        baseline_fraction=probe_baseline_fraction,
         show_results=show_results,
         boundary_layer_model=None,
     )
@@ -621,6 +633,7 @@ def main(
         "gas1": gas1,
         "gas4": gas4,
         "probe_rise_fraction": probe_rise_fraction,
+        "probe_baseline_fraction": probe_baseline_fraction,
         "Boundary_Layer_Model": Boundary_Layer_Model,
         "T1": T1,
         "P1": P1,
