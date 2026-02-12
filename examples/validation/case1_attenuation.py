@@ -19,7 +19,7 @@
 '''
 import os.path
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import cantera as ct
 import matplotlib as mpl
@@ -110,7 +110,7 @@ def main(
     Boundary_Layer_Model: bool = True,
     probe_locations: Sequence[float] = (0.5,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.47)
 
-) -> None:
+) -> Dict[str, Any]:
     ct.add_directory(PROJECT_DIR)
     # simulation controls
     tFinal = t_final
@@ -361,6 +361,30 @@ def main(
         fig.savefig(os.path.join(results_location, "case1_attenuation_probes.png"), dpi=200)
         plt.figure(2)
         plt.savefig(os.path.join(results_location, "case1_attenuation_xt.png"), dpi=200)
+
+    return {
+        "solver": ssbl,
+        "gas1": gas1,
+        "gas4": gas4,
+        "probe_locations": x_probe,
+        "probe_arrival_times": arrivals,
+        "probe_shock_pressures": shock_pressures,
+        "probe_attenuation": attenuation_values,
+        "attenuation_rate": attenuation_rate,
+        "attenuation_intercept": attenuation_intercept,
+        "shock_speed_average": x_t_slope,
+        "shock_speed_intercept": x_t_intercept,
+        "shock_speed_segment": us_seg,
+        "shock_speed_attenuation_rate": us_attenuation_rate,
+        "shock_speed_attenuation_intercept": us_intercept,
+        "shock_speed_percent_attenuation_rate": us_percent_attenuation_rate,
+        "shock_mach_segment": ms_seg,
+        "shock_mach_attenuation_rate": ms_attenuation_rate,
+        "shock_mach_attenuation_intercept": ms_intercept,
+        "xt_time": np.array(ssbl.XTDiagrams["pressure"].t),
+        "xt_x": np.array(ssbl.XTDiagrams["pressure"].x),
+        "xt_pressure": np.array(ssbl.XTDiagrams["pressure"].variable),
+    }
 
 
 if __name__ == "__main__":
