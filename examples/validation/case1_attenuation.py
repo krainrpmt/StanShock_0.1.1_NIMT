@@ -456,7 +456,8 @@ def main(
     X4: Optional[str] = 'He:58.8971, Ar:41.1029', #'He:21.8787, N2:78.1213'
     Boundary_Layer_Model: bool = True,
     probe_locations: Sequence[float] = (0.5,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.47),
-    probe_rise_fraction: float = 0.03
+    probe_rise_fraction: float = 0.03,
+    expose_results_to_globals: bool = False,
 
 ) -> Dict[str, Any]:
     ct.add_directory(PROJECT_DIR)
@@ -597,8 +598,17 @@ def main(
         "gas1": gas1,
         "gas4": gas4,
         "probe_rise_fraction": probe_rise_fraction,
+        "Boundary_Layer_Model": Boundary_Layer_Model,
+        "T1": T1,
+        "P1": P1,
+        "T4": T4,
+        "P4": P4,
     }
     out.update(post)
+
+    if expose_results_to_globals:
+        globals().update(out)
+
     return out
 
 
