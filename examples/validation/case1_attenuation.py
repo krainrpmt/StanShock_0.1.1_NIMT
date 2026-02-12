@@ -427,27 +427,28 @@ def _plot_xt_from_cached_fields(
     xt_temperature: Optional[np.ndarray] = None,
 ) -> None:
     """Plot X-t diagrams directly from cached arrays."""
-    def _plot_one(field: np.ndarray, title: str, y_label: str) -> None:
+    def _plot_one(field: np.ndarray, title: str) -> None:
         arr = np.array(field)
         if arr.shape == (len(xt_time), len(xt_x)):
-            z = arr.T
-        elif arr.shape == (len(xt_x), len(xt_time)):
             z = arr
+        elif arr.shape == (len(xt_x), len(xt_time)):
+            z = arr.T
         else:
             raise ValueError(f"Unexpected X-t shape for {title}: {arr.shape}")
+        x_mesh, t_mesh = np.meshgrid(xt_x, xt_time * 1000.0)
         plt.figure(figsize=(6.2, 4.0))
-        plt.pcolormesh(xt_time * 1000.0, xt_x, z, shading="auto")
-        plt.xlabel("t [ms]")
-        plt.ylabel(y_label)
+        plt.pcolormesh(x_mesh, t_mesh, z, shading="auto")
+        plt.xlabel("x [m]")
+        plt.ylabel("t [ms]")
         plt.title(title)
         plt.colorbar()
         plt.tight_layout()
 
-    _plot_one(xt_pressure, "Pressure X-t diagram (pressure)", "x [m]")
+    _plot_one(xt_pressure, "Pressure X-t diagram (pressure)")
     if xt_density is not None:
-        _plot_one(xt_density, "Pressure X-t diagram (density)", "x [m]")
+        _plot_one(xt_density, "Pressure X-t diagram (density)")
     if xt_temperature is not None:
-        _plot_one(xt_temperature, "Pressure X-t diagram (temperature)", "x [m]")
+        _plot_one(xt_temperature, "Pressure X-t diagram (temperature)")
 
 def postprocess_cached_results(
     results_location: Optional[str] = None,
