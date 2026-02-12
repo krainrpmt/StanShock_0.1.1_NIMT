@@ -19,7 +19,7 @@
 '''
 import os.path
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import cantera as ct
 import matplotlib as mpl
@@ -82,6 +82,126 @@ def _shock_metrics_from_probe(
     attenuation_metric = float(np.log(shock_pressure / baseline_pressure))
     return arrival_time, shock_pressure, attenuation_metric
 
+
+# placeholder: branch-reset marker for new PR workflow
+def _collect_probe_traces(ssbl: stanShock, n_probes: int) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+    """Collect raw time/pressure traces for each configured probe."""
+    probe_times = []
+    probe_pressures = []
+    for probe in ssbl.probes[:n_probes]:
+        probe_times.append(np.array(probe.t))
+        probe_pressures.append(np.array(probe.p))
+    return probe_times, probe_pressures
+
+
+def postprocess_probe_traces(
+    probe_times: Sequence[np.ndarray],
+    probe_pressures: Sequence[np.ndarray],
+    probe_locations: Sequence[float],
+    baseline_pressure: float,
+    gas1: Optional[ct.Solution],
+    boundary_layer_model: bool,
+    rise_fraction: float = 0.03,
+    sound_speed_a1: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Post-process saved probe traces to extract shock/attenuation metrics."""
+    arrivals = []
+    shock_pressures = []
+    attenuation_values = []
+
+    for t_probe, p_probe in zip(probe_times, probe_pressures):
+        arrival_t, p_shock, attn = _shock_metrics_from_probe(
+            t_probe, p_probe, baseline_pressure, rise_fraction=rise_fraction
+        )
+        arrivals.append(arrival_t)
+        shock_pressures.append(p_shock)
+        attenuation_values.append(attn)
+
+    x_probe = np.array(probe_locations)
+    arrivals = np.array(arrivals)
+    shock_pressures = np.array(shock_pressures)
+    attenuation_values = np.array(attenuation_values)
+
+    attenuation_rate, attenuation_intercept = np.polyfit(x_probe, attenuation_values, 1)
+    x_t_slope, x_t_intercept = np.polyfit(arrivals, x_probe, 1)
+
+    dt_seg = np.diff(arrivals)
+    dx_seg = np.diff(x_probe)
+    valid_seg = dt_seg > 0.0
+    if np.count_nonzero(valid_seg) >= 2:
+        x_seg = 0.5 * (x_probe[:-1][valid_seg] + x_probe[1:][valid_seg])
+        us_seg = dx_seg[valid_seg] / dt_seg[valid_seg]
+        us_attenuation_rate, us_intercept = np.polyfit(x_seg, us_seg, 1)
+
+        a1 = float(sound_speed_a1) if sound_speed_a1 is not None else _gas_sound_speed(gas1)
+        ms_seg = us_seg / a1
+        ms_attenuation_rate, ms_intercept = np.polyfit(x_seg, ms_seg, 1)
+
+        us_percent_attenuation_rate = 100.0 * us_attenuation_rate / us_intercept if us_intercept != 0.0 else np.nan
+    else:
+        x_seg = np.array([])
+        us_seg = np.array([])
+        ms_seg = np.array([])
+        us_attenuation_rate = np.nan
+        us_intercept = np.nan
+        ms_attenuation_rate = np.nan
+        ms_intercept = np.nan
+        us_percent_attenuation_rate = np.nan
+
+    if boundary_layer_model:
+        if np.isfinite(us_attenuation_rate):
+            print("Shock-speed attenuation dU_s/dx [(m/s)/m]: %.6f" % us_attenuation_rate)
+        else:
+            print("Shock-speed attenuation dU_s/dx [(m/s)/m]: unavailable (insufficient valid probe segments)")
+        if np.isfinite(us_percent_attenuation_rate):
+            print("Percent speed-change attenuation (slope/intercept*100) [%%/m]: %.6f" % us_percent_attenuation_rate)
+        else:
+            print("Percent speed-change attenuation (slope/intercept*100) [%%/m]: unavailable")
+        if np.isfinite(ms_attenuation_rate):
+            print("Mach attenuation dM_s/dx [1/m]: %.6f" % ms_attenuation_rate)
+        else:
+            print("Mach attenuation dM_s/dx [1/m]: unavailable (insufficient valid probe segments)")
+
+    return {
+        "probe_locations": x_probe,
+        "probe_arrival_times": arrivals,
+        "probe_shock_pressures": shock_pressures,
+        "probe_attenuation": attenuation_values,
+        "attenuation_rate": attenuation_rate,
+        "attenuation_intercept": attenuation_intercept,
+        "shock_speed_average": x_t_slope,
+        "shock_speed_intercept": x_t_intercept,
+        "shock_speed_segment_centers": x_seg,
+        "shock_speed_segment": us_seg,
+        "shock_speed_attenuation_rate": us_attenuation_rate,
+        "shock_speed_attenuation_intercept": us_intercept,
+        "shock_speed_percent_attenuation_rate": us_percent_attenuation_rate,
+        "shock_mach_segment": ms_seg,
+        "shock_mach_attenuation_rate": ms_attenuation_rate,
+        "shock_mach_attenuation_intercept": ms_intercept,
+    }
+
+
+def postprocess_probe_file(raw_results_file: str, rise_fraction: float = 0.03) -> Dict[str, Any]:
+    """Load raw probe traces from disk and recompute shock metrics offline."""
+    with np.load(raw_results_file, allow_pickle=True) as data:
+        probe_times = [np.array(t) for t in data["probe_t"]]
+        probe_pressures = [np.array(p) for p in data["probe_p"]]
+        probe_locations = np.array(data["probe_locations"])
+        baseline_pressure = float(data["P1"])
+        sound_speed_a1 = float(data["sound_speed_a1"]) if "sound_speed_a1" in data else None
+
+    return postprocess_probe_traces(
+        probe_times=probe_times,
+        probe_pressures=probe_pressures,
+        probe_locations=probe_locations,
+        baseline_pressure=baseline_pressure,
+        gas1=None,
+        boundary_layer_model=True,
+        rise_fraction=rise_fraction,
+        sound_speed_a1=sound_speed_a1,
+    )
+
 def _gas_sound_speed(gas: ct.Solution) -> float:
     """Return sound speed with compatibility across Cantera versions."""
     if hasattr(gas, "sound_speed"):
@@ -108,7 +228,8 @@ def main(
     X1: Optional[str] = 'H2:4, O2:2, Ar:94', #4PctH2_2PctO2_94PctAr
     X4: Optional[str] = 'He:58.8971, Ar:41.1029', #'He:21.8787, N2:78.1213'
     Boundary_Layer_Model: bool = True,
-    probe_locations: Sequence[float] = (0.5,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.47)
+    probe_locations: Sequence[float] = (0.5,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.47),
+    probe_rise_fraction: float = 0.03
 
 ) -> Dict[str, Any]:
     ct.add_directory(PROJECT_DIR)
@@ -209,54 +330,35 @@ def main(
     # Solve
     ssbl.advanceSimulation(tFinal)
 
-    # --- Post-processing: attenuation from multi-probe data ---
-    arrivals = []
-    shock_pressures = []
-    attenuation_values = []
+    # --- Save raw traces once, then post-process probe behavior offline ---
+    probe_t, probe_p = _collect_probe_traces(ssbl, len(probe_locations))
+    metrics = postprocess_probe_traces(
+        probe_times=probe_t,
+        probe_pressures=probe_p,
+        probe_locations=probe_locations,
+        baseline_pressure=P1,
+        gas1=gas1,
+        boundary_layer_model=Boundary_Layer_Model,
+        rise_fraction=probe_rise_fraction,
+        sound_speed_a1=_gas_sound_speed(gas1),
+    )
 
-    for probe in ssbl.probes[:len(probe_locations)]:
-        t_probe = np.array(probe.t)
-        p_probe = np.array(probe.p)
-        arrival_t, p_shock, attn = _shock_metrics_from_probe(t_probe, p_probe, P1)
-        arrivals.append(arrival_t)
-        shock_pressures.append(p_shock)
-        attenuation_values.append(attn)
-
-    x_probe = np.array(probe_locations)
-    arrivals = np.array(arrivals)
-    shock_pressures = np.array(shock_pressures)
-    attenuation_values = np.array(attenuation_values)
-
-
-    # attenuation rate based on ln(p_shock/p1) vs x
-    attenuation_rate, attenuation_intercept = np.polyfit(x_probe, attenuation_values, 1)
-
-    # average shock speed from x(t_arrival)
-    x_t_slope, x_t_intercept = np.polyfit(arrivals, x_probe, 1)
-
-    # shock-speed attenuation from probe-to-probe travel times
-    dt_seg = np.diff(arrivals)
-    dx_seg = np.diff(x_probe)
-    valid_seg = dt_seg > 0.0
-    if np.count_nonzero(valid_seg) >= 2:
-        x_seg = 0.5 * (x_probe[:-1][valid_seg] + x_probe[1:][valid_seg])
-        us_seg = dx_seg[valid_seg] / dt_seg[valid_seg]
-        us_attenuation_rate, us_intercept = np.polyfit(x_seg, us_seg, 1)
-
-        a1 = _gas_sound_speed(gas1)
-        ms_seg = us_seg / a1
-        ms_attenuation_rate, ms_intercept = np.polyfit(x_seg, ms_seg, 1)
-
-        us_percent_attenuation_rate = 100.0 * us_attenuation_rate / us_intercept if us_intercept != 0.0 else np.nan
-    else:
-        x_seg = np.array([])
-        us_seg = np.array([])
-        ms_seg = np.array([])
-        us_attenuation_rate = np.nan
-        us_intercept = np.nan
-        ms_attenuation_rate = np.nan
-        ms_intercept = np.nan
-        us_percent_attenuation_rate = np.nan
+    x_probe = metrics["probe_locations"]
+    arrivals = metrics["probe_arrival_times"]
+    shock_pressures = metrics["probe_shock_pressures"]
+    attenuation_values = metrics["probe_attenuation"]
+    attenuation_rate = metrics["attenuation_rate"]
+    attenuation_intercept = metrics["attenuation_intercept"]
+    x_t_slope = metrics["shock_speed_average"]
+    x_t_intercept = metrics["shock_speed_intercept"]
+    x_seg = metrics["shock_speed_segment_centers"]
+    us_seg = metrics["shock_speed_segment"]
+    us_attenuation_rate = metrics["shock_speed_attenuation_rate"]
+    us_intercept = metrics["shock_speed_attenuation_intercept"]
+    us_percent_attenuation_rate = metrics["shock_speed_percent_attenuation_rate"]
+    ms_seg = metrics["shock_mach_segment"]
+    ms_attenuation_rate = metrics["shock_mach_attenuation_rate"]
+    ms_intercept = metrics["shock_mach_attenuation_intercept"]
 
     print("\n==== Shock Probes ====")
     print("Initial state driven  (T1 [K], P1 [Pa]):", (T1, P1))
@@ -270,20 +372,6 @@ def main(
     if len(us_seg) > 0:
         print("Segment centers x [m]:", x_seg)
         print("Segment shock speeds U_s [m/s]:", us_seg)
-    if Boundary_Layer_Model == True:
-        if np.isfinite(us_attenuation_rate):
-            print("Shock-speed attenuation dU_s/dx [(m/s)/m]: %.6f" % us_attenuation_rate)
-        else:
-            print("Shock-speed attenuation dU_s/dx [(m/s)/m]: unavailable (insufficient valid probe segments)")
-        if np.isfinite(us_percent_attenuation_rate):
-            print("Percent speed-change attenuation (slope/intercept*100) [%%/m]: %.6f" % us_percent_attenuation_rate)
-        else:
-            print("Percent speed-change attenuation (slope/intercept*100) [%%/m]: unavailable")
-        if np.isfinite(ms_attenuation_rate):
-            print("Mach attenuation dM_s/dx [1/m]: %.6f" % ms_attenuation_rate)
-        else:
-            print("Mach attenuation dM_s/dx [1/m]: unavailable (insufficient valid probe segments)")
-
     # --- Plots ---
     plt.close("all")
     mpl.rcParams["font.size"] = fontsize
@@ -357,10 +445,49 @@ def main(
             xt_time=np.array(ssbl.XTDiagrams["pressure"].t),
             xt_x=np.array(ssbl.XTDiagrams["pressure"].x),
             xt_pressure=np.array(ssbl.XTDiagrams["pressure"].variable),
+            probe_t=np.array(probe_t, dtype=object),
+            probe_p=np.array(probe_p, dtype=object),
+            probe_rise_fraction=probe_rise_fraction,
+            sound_speed_a1=_gas_sound_speed(gas1),
         )
         fig.savefig(os.path.join(results_location, "case1_attenuation_probes.png"), dpi=200)
         plt.figure(2)
         plt.savefig(os.path.join(results_location, "case1_attenuation_xt.png"), dpi=200)
+        np.savez(
+            os.path.join(results_location, "case1_attenuation_raw_traces.npz"),
+            probe_locations=np.array(probe_locations),
+            probe_t=np.array(probe_t, dtype=object),
+            probe_p=np.array(probe_p, dtype=object),
+            P1=P1,
+            sound_speed_a1=_gas_sound_speed(gas1),
+        )
+
+    return {
+        "solver": ssbl,
+        "gas1": gas1,
+        "gas4": gas4,
+        "probe_locations": x_probe,
+        "probe_arrival_times": arrivals,
+        "probe_shock_pressures": shock_pressures,
+        "probe_attenuation": attenuation_values,
+        "attenuation_rate": attenuation_rate,
+        "attenuation_intercept": attenuation_intercept,
+        "shock_speed_average": x_t_slope,
+        "shock_speed_intercept": x_t_intercept,
+        "shock_speed_segment": us_seg,
+        "shock_speed_attenuation_rate": us_attenuation_rate,
+        "shock_speed_attenuation_intercept": us_intercept,
+        "shock_speed_percent_attenuation_rate": us_percent_attenuation_rate,
+        "shock_mach_segment": ms_seg,
+        "shock_mach_attenuation_rate": ms_attenuation_rate,
+        "shock_mach_attenuation_intercept": ms_intercept,
+        "xt_time": np.array(ssbl.XTDiagrams["pressure"].t),
+        "xt_x": np.array(ssbl.XTDiagrams["pressure"].x),
+        "xt_pressure": np.array(ssbl.XTDiagrams["pressure"].variable),
+        "probe_t": probe_t,
+        "probe_p": probe_p,
+        "probe_rise_fraction": probe_rise_fraction,
+    }
 
     return {
         "solver": ssbl,
