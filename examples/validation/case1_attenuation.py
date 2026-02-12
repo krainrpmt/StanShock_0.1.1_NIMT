@@ -283,6 +283,162 @@ def _gas_sound_speed(gas: ct.Solution) -> float:
     return float(np.sqrt(gamma * gas.P / gas.density))
 
 
+
+
+def _plot_postprocessed_results(
+    probe_times: Sequence[np.ndarray],
+    probe_pressures: Sequence[np.ndarray],
+    probe_locations: Sequence[float],
+    metrics: Dict[str, Any],
+    boundary_layer_model: bool,
+    fontsize: int = 11,
+) -> Tuple[Any, Optional[Any]]:
+    """Create probe and speed-fit plots from postprocessed data."""
+    arrivals = metrics["probe_arrival_times"]
+    us_percent_attenuation_rate = metrics["shock_speed_percent_attenuation_rate"]
+    x_seg = metrics["shock_speed_segment_centers"]
+    us_seg = metrics["shock_speed_segment"]
+    us_attenuation_rate = metrics["shock_speed_attenuation_rate"]
+    us_intercept = metrics["shock_speed_attenuation_intercept"]
+
+    plt.close("all")
+    mpl.rcParams["font.size"] = fontsize
+
+    n_probe_plot = len(probe_locations)
+    fig, axes = plt.subplots(n_probe_plot, 1, figsize=(6.2, 2.25 * n_probe_plot + 1.0), sharex=True)
+    if n_probe_plot == 1:
+        axes = np.array([axes])
+    for i in range(n_probe_plot):
+        t_probe = np.array(probe_times[i])
+        p_probe = np.array(probe_pressures[i])
+        axes[i].plot(t_probe * 1000.0, p_probe / 1.0e5, "k", linewidth=1.7)
+        axes[i].axvline(arrivals[i] * 1000.0, color="r", linestyle="--", linewidth=1.2, label="shock arrival")
+        axes[i].set_ylabel("p [bar]")
+        axes[i].set_title("Probe %d at x = %.2f m" % (i + 1, probe_locations[i]))
+        axes[i].grid(alpha=0.25)
+        axes[i].legend(loc="upper right")
+    axes[-1].set_xlabel("t [ms]")
+    if boundary_layer_model:
+        fig.suptitle(
+            "(Boundary Layer ON)\nShock attenuation rate (Shock Speed) [%%/m]: %.6f" % us_percent_attenuation_rate,
+            y=0.995,
+        )
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
+    else:
+        fig.suptitle("(Boundary Layer OFF)", y=0.995)
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
+
+    fig_speed = None
+    if len(x_seg) > 0:
+        fig_speed = plt.figure(figsize=(6.2, 4.0))
+        plt.plot(x_seg, us_seg, "o", color="tab:blue", label="Segment speed")
+        if np.isfinite(us_attenuation_rate) and np.isfinite(us_intercept):
+            x_fit = np.linspace(np.min(x_seg), np.max(x_seg), 100)
+            u_fit = us_attenuation_rate * x_fit + us_intercept
+            plt.plot(
+                x_fit,
+                u_fit,
+                "--",
+                color="tab:red",
+                label=(
+                    "Linear fit: $U_s = m x + b$\n"
+                    f"m={us_attenuation_rate:.3f} (m/s)/m, b={us_intercept:.3f} m/s"
+                ),
+            )
+        plt.xlabel("Segment center x [m]")
+        plt.ylabel("Probed speed U_s [m/s]")
+        plt.title("Probed Speed vs Segment Centers")
+        plt.grid(alpha=0.25)
+        plt.legend(loc="best")
+        plt.tight_layout()
+
+    return fig, fig_speed
+
+
+def postprocess_cached_results(
+    results_location: Optional[str] = None,
+    probe_locations: Optional[Sequence[float]] = None,
+    rise_fraction: float = 0.03,
+    show_results: bool = True,
+    boundary_layer_model: bool = True,
+) -> Dict[str, Any]:
+    """Post-process already-cached CFD results with optional redefined probe locations."""
+    cache_file = _cache_file_path(results_location)
+    with np.load(cache_file, allow_pickle=True) as data:
+        xt_time = np.array(data["xt_time"])
+        xt_x = np.array(data["xt_x"])
+        xt_pressure = np.array(data["xt_pressure"])
+        cached_probe_locations = np.array(data["probe_locations"])
+        T1 = float(data["T1"]) if "T1" in data else np.nan
+        P1 = float(data["P1"]) if "P1" in data else np.nan
+        T4 = float(data["T4"]) if "T4" in data else np.nan
+        P4 = float(data["P4"]) if "P4" in data else np.nan
+        sound_speed_a1 = float(data["sound_speed_a1"]) if "sound_speed_a1" in data else np.nan
+
+    selected_probe_locations = np.array(probe_locations) if probe_locations is not None else cached_probe_locations
+
+    metrics = postprocess_probe_file(
+        str(cache_file),
+        rise_fraction=rise_fraction,
+        probe_locations=selected_probe_locations,
+    )
+
+    probe_t, probe_p = reconstruct_probe_traces_from_xt(
+        xt_time, xt_x, xt_pressure, selected_probe_locations
+    )
+
+    fig, fig_speed = _plot_postprocessed_results(
+        probe_times=probe_t,
+        probe_pressures=probe_p,
+        probe_locations=selected_probe_locations,
+        metrics=metrics,
+        boundary_layer_model=boundary_layer_model,
+    )
+
+    if show_results:
+        plt.show()
+    else:
+        plt.close("all")
+
+    results_dir = _prepare_results_dir(results_location)
+    np.savez(
+        cache_file,
+        probe_locations=metrics["probe_locations"],
+        probe_arrival_times=metrics["probe_arrival_times"],
+        T1=T1,
+        P1=P1,
+        T4=T4,
+        P4=P4,
+        probe_shock_pressures=metrics["probe_shock_pressures"],
+        probe_attenuation=metrics["probe_attenuation"],
+        attenuation_rate=metrics["attenuation_rate"],
+        attenuation_intercept=metrics["attenuation_intercept"],
+        shock_speed_average=metrics["shock_speed_average"],
+        shock_speed_intercept=metrics["shock_speed_intercept"],
+        shock_speed_segment_centers=metrics["shock_speed_segment_centers"],
+        shock_speed_segment=metrics["shock_speed_segment"],
+        shock_speed_attenuation_rate=metrics["shock_speed_attenuation_rate"],
+        shock_speed_attenuation_intercept=metrics["shock_speed_attenuation_intercept"],
+        shock_speed_percent_attenuation_rate=metrics["shock_speed_percent_attenuation_rate"],
+        shock_mach_segment=metrics["shock_mach_segment"],
+        shock_mach_attenuation_rate=metrics["shock_mach_attenuation_rate"],
+        shock_mach_attenuation_intercept=metrics["shock_mach_attenuation_intercept"],
+        xt_time=xt_time,
+        xt_x=xt_x,
+        xt_pressure=xt_pressure,
+        probe_t=np.array(probe_t, dtype=object),
+        probe_p=np.array(probe_p, dtype=object),
+        probe_rise_fraction=rise_fraction,
+        sound_speed_a1=sound_speed_a1,
+    )
+    fig.savefig(results_dir / "case1_attenuation_probes.png", dpi=200)
+    if fig_speed is not None:
+        fig_speed.savefig(results_dir / "case1_attenuation_speed_fit.png", dpi=200)
+
+    out = dict(metrics)
+    out.update({"xt_time": xt_time, "xt_x": xt_x, "xt_pressure": xt_pressure, "probe_t": probe_t, "probe_p": probe_p})
+    return out
+
 def main(
         #PROJECT_DIR / "data/mechanisms/HeliumArgon.xml",
     mech_filename_gas_1: str = "gri30_He.yaml",
@@ -420,211 +576,30 @@ def main(
         sound_speed_a1=_gas_sound_speed(gas1),
     )
 
-    # Always compute metrics from cached file (supports probe changes without rerunning CFD).
-    metrics = postprocess_probe_file(
-        str(results_dir / "case1_attenuation.npz"),
-        rise_fraction=probe_rise_fraction,
+    post = postprocess_cached_results(
+        results_location=str(results_dir),
         probe_locations=probe_locations,
+        rise_fraction=probe_rise_fraction,
+        show_results=show_results,
+        boundary_layer_model=Boundary_Layer_Model,
     )
-
-    # Reconstruct probe traces used for plotting from cached X-t field.
-    probe_t, probe_p = reconstruct_probe_traces_from_xt(
-        np.array(ssbl.XTDiagrams["pressure"].t),
-        np.array(ssbl.XTDiagrams["pressure"].x),
-        np.array(ssbl.XTDiagrams["pressure"].variable),
-        probe_locations,
-    )
-
-    x_probe = metrics["probe_locations"]
-    arrivals = metrics["probe_arrival_times"]
-    shock_pressures = metrics["probe_shock_pressures"]
-    attenuation_values = metrics["probe_attenuation"]
-    attenuation_rate = metrics["attenuation_rate"]
-    attenuation_intercept = metrics["attenuation_intercept"]
-    x_t_slope = metrics["shock_speed_average"]
-    x_t_intercept = metrics["shock_speed_intercept"]
-    x_seg = metrics["shock_speed_segment_centers"]
-    us_seg = metrics["shock_speed_segment"]
-    us_attenuation_rate = metrics["shock_speed_attenuation_rate"]
-    us_intercept = metrics["shock_speed_attenuation_intercept"]
-    us_percent_attenuation_rate = metrics["shock_speed_percent_attenuation_rate"]
-    ms_seg = metrics["shock_mach_segment"]
-    ms_attenuation_rate = metrics["shock_mach_attenuation_rate"]
-    ms_intercept = metrics["shock_mach_attenuation_intercept"]
 
     print("\n==== Shock Probes ====")
     print("Initial state driven  (T1 [K], P1 [Pa]):", (T1, P1))
     print("Initial state driver  (T4 [K], P4 [Pa]):", (T4, P4))
-    print("Probe positions [m]:", x_probe)
-    print("Shock arrival times [ms]:", arrivals * 1e3)
-    print("Shock pressures [bar]:", shock_pressures / 1e5)
-    #print("ln(p_shock/p1):", attenuation_values)
-    #print("Attenuation rate dln(p_shock/P1)/dx [1/m]: %.6f" % attenuation_rate)
-    print("Average shock speed from x(t_arrival) [m/s]: %.3f" % x_t_slope)
-    if len(us_seg) > 0:
-        print("Segment centers x [m]:", x_seg)
-        print("Segment shock speeds U_s [m/s]:", us_seg)
-    if Boundary_Layer_Model == True:
-        if np.isfinite(us_attenuation_rate):
-            print("Shock-speed attenuation dU_s/dx [(m/s)/m]: %.6f" % us_attenuation_rate)
-        else:
-            print("Shock-speed attenuation dU_s/dx [(m/s)/m]: unavailable (insufficient valid probe segments)")
-        if np.isfinite(us_percent_attenuation_rate):
-            print("Percent speed-change attenuation (slope/intercept*100) [%%/m]: %.6f" % us_percent_attenuation_rate)
-        else:
-            print("Percent speed-change attenuation (slope/intercept*100) [%%/m]: unavailable")
-        if np.isfinite(ms_attenuation_rate):
-            print("Mach attenuation dM_s/dx [1/m]: %.6f" % ms_attenuation_rate)
-        else:
-            print("Mach attenuation dM_s/dx [1/m]: unavailable (insufficient valid probe segments)")
+    print("Probe positions [m]:", post["probe_locations"])
+    print("Shock arrival times [ms]:", post["probe_arrival_times"] * 1e3)
+    print("Shock pressures [bar]:", post["probe_shock_pressures"] / 1e5)
+    print("Average shock speed from x(t_arrival) [m/s]: %.3f" % post["shock_speed_average"])
 
-    # --- Plots ---
-    plt.close("all")
-    mpl.rcParams["font.size"] = fontsize
-
-    # Probe graphs in one figure
-    n_probe_plot = len(probe_locations)
-    fig, axes = plt.subplots(n_probe_plot, 1, figsize=(6.2, 2.25 * n_probe_plot + 1.0), sharex=True)
-    if n_probe_plot == 1:
-        axes = np.array([axes])
-    for i in range(n_probe_plot):
-        t_probe = np.array(probe_t[i])
-        p_probe = np.array(probe_p[i])
-        axes[i].plot(t_probe * 1000.0, p_probe / 1.0e5, "k", linewidth=1.7)
-        axes[i].axvline(arrivals[i] * 1000.0, color="r", linestyle="--", linewidth=1.2, label="shock arrival")
-        axes[i].set_ylabel("p [bar]")
-        axes[i].set_title("Probe %d at x = %.2f m" % (i + 1, probe_locations[i]))
-        axes[i].grid(alpha=0.25)
-        axes[i].legend(loc="upper right")
-    axes[-1].set_xlabel("t [ms]")
-    if Boundary_Layer_Model == True:
-        fig.suptitle(
-            "(Boundary Layer ON)\nShock attenuation rate (Shock Speed) [%%/m]: %.6f" % us_percent_attenuation_rate,
-            y=0.995,
-        )
-        fig.tight_layout(rect=[0, 0, 1, 0.96])
-    else:
-        fig.suptitle(
-            "(Boundary Layer OFF)",
-            y=0.995,
-        )
-        fig.tight_layout(rect=[0, 0, 1, 0.96])
-
-    # X-t diagram for pressure
-    ssbl.plotXTDiagram(ssbl.XTDiagrams["pressure"])
-    plt.title("Pressure X-t diagram (pressure)")
-    plt.tight_layout()
-
-    ssbl.plotXTDiagram(ssbl.XTDiagrams["density"])
-    plt.title("Pressure X-t diagram (density)")
-    plt.tight_layout()
-
-    ssbl.plotXTDiagram(ssbl.XTDiagrams["temperature"])
-    plt.title("Pressure X-t diagram (temperature)")
-    plt.tight_layout()
-
-    fig_speed = None
-    if len(x_seg) > 0:
-        fig_speed = plt.figure(figsize=(6.2, 4.0))
-        plt.plot(x_seg, us_seg, "o", color="tab:blue", label="Segment speed")
-        if np.isfinite(us_attenuation_rate) and np.isfinite(us_intercept):
-            x_fit = np.linspace(np.min(x_seg), np.max(x_seg), 100)
-            u_fit = us_attenuation_rate * x_fit + us_intercept
-            plt.plot(
-                x_fit,
-                u_fit,
-                "--",
-                color="tab:red",
-                label=(
-                    "Linear fit: $U_s = m x + b$\n"
-                    f"m={us_attenuation_rate:.3f} (m/s)/m, b={us_intercept:.3f} m/s"
-                ),
-            )
-        plt.xlabel("Segment center x [m]")
-        plt.ylabel("Probed speed U_s [m/s]")
-        plt.title("Probed Speed vs Segment Centers")
-        plt.grid(alpha=0.25)
-        plt.legend(loc="best")
-        plt.tight_layout()
-
-    if show_results:
-        plt.show()
-    else:
-        # In notebook/inline backends, open figures may still render at cell end
-        # even without plt.show(); close them explicitly when display is disabled.
-        plt.close("all")
-
-    np.savez(
-        results_dir / "case1_attenuation.npz",
-        probe_locations=x_probe,
-        probe_arrival_times=arrivals,
-        probe_shock_pressures=shock_pressures,
-        probe_attenuation=attenuation_values,
-        T1=T1,
-        P1=P1,
-        T4=T4,
-        P4=P4,
-        attenuation_rate=attenuation_rate,
-        attenuation_intercept=attenuation_intercept,
-        shock_speed_average=x_t_slope,
-        shock_speed_intercept=x_t_intercept,
-        shock_speed_segment_centers=x_seg,
-        shock_speed_segment=us_seg,
-        shock_speed_attenuation_rate=us_attenuation_rate,
-        shock_speed_attenuation_intercept=us_intercept,
-        shock_speed_percent_attenuation_rate=us_percent_attenuation_rate,
-        shock_mach_segment=ms_seg,
-        shock_mach_attenuation_rate=ms_attenuation_rate,
-        shock_mach_attenuation_intercept=ms_intercept,
-        xt_time=np.array(ssbl.XTDiagrams["pressure"].t),
-        xt_x=np.array(ssbl.XTDiagrams["pressure"].x),
-        xt_pressure=np.array(ssbl.XTDiagrams["pressure"].variable),
-        probe_t=np.array(probe_t, dtype=object),
-        probe_p=np.array(probe_p, dtype=object),
-        probe_rise_fraction=probe_rise_fraction,
-        sound_speed_a1=_gas_sound_speed(gas1),
-    )
-    fig.savefig(results_dir / "case1_attenuation_probes.png", dpi=200)
-    plt.figure(2)
-    plt.savefig(results_dir / "case1_attenuation_xt.png", dpi=200)
-    if fig_speed is not None:
-        fig_speed.savefig(results_dir / "case1_attenuation_speed_fit.png", dpi=200)
-    np.savez(
-        results_dir / "case1_attenuation_raw_traces.npz",
-        probe_locations=np.array(probe_locations),
-        probe_t=np.array(probe_t, dtype=object),
-        probe_p=np.array(probe_p, dtype=object),
-        P1=P1,
-        sound_speed_a1=_gas_sound_speed(gas1),
-    )
-
-    return {
+    out = {
         "solver": ssbl,
         "gas1": gas1,
         "gas4": gas4,
-        "probe_locations": x_probe,
-        "probe_arrival_times": arrivals,
-        "probe_shock_pressures": shock_pressures,
-        "probe_attenuation": attenuation_values,
-        "attenuation_rate": attenuation_rate,
-        "attenuation_intercept": attenuation_intercept,
-        "shock_speed_average": x_t_slope,
-        "shock_speed_intercept": x_t_intercept,
-        "shock_speed_segment_centers": x_seg,
-        "shock_speed_segment": us_seg,
-        "shock_speed_attenuation_rate": us_attenuation_rate,
-        "shock_speed_attenuation_intercept": us_intercept,
-        "shock_speed_percent_attenuation_rate": us_percent_attenuation_rate,
-        "shock_mach_segment": ms_seg,
-        "shock_mach_attenuation_rate": ms_attenuation_rate,
-        "shock_mach_attenuation_intercept": ms_intercept,
-        "xt_time": np.array(ssbl.XTDiagrams["pressure"].t),
-        "xt_x": np.array(ssbl.XTDiagrams["pressure"].x),
-        "xt_pressure": np.array(ssbl.XTDiagrams["pressure"].variable),
-        "probe_t": probe_t,
-        "probe_p": probe_p,
         "probe_rise_fraction": probe_rise_fraction,
     }
+    out.update(post)
+    return out
 
 
 if __name__ == "__main__":
