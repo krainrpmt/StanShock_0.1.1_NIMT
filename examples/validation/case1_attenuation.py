@@ -489,6 +489,30 @@ def main(
         "probe_rise_fraction": probe_rise_fraction,
     }
 
+    return {
+        "solver": ssbl,
+        "gas1": gas1,
+        "gas4": gas4,
+        "probe_locations": x_probe,
+        "probe_arrival_times": arrivals,
+        "probe_shock_pressures": shock_pressures,
+        "probe_attenuation": attenuation_values,
+        "attenuation_rate": attenuation_rate,
+        "attenuation_intercept": attenuation_intercept,
+        "shock_speed_average": x_t_slope,
+        "shock_speed_intercept": x_t_intercept,
+        "shock_speed_segment": us_seg,
+        "shock_speed_attenuation_rate": us_attenuation_rate,
+        "shock_speed_attenuation_intercept": us_intercept,
+        "shock_speed_percent_attenuation_rate": us_percent_attenuation_rate,
+        "shock_mach_segment": ms_seg,
+        "shock_mach_attenuation_rate": ms_attenuation_rate,
+        "shock_mach_attenuation_intercept": ms_intercept,
+        "xt_time": np.array(ssbl.XTDiagrams["pressure"].t),
+        "xt_x": np.array(ssbl.XTDiagrams["pressure"].x),
+        "xt_pressure": np.array(ssbl.XTDiagrams["pressure"].variable),
+    }
+
 
 if __name__ == "__main__":
     main()
