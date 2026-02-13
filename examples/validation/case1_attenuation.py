@@ -37,6 +37,7 @@ def _shock_metrics_from_probe(
     baseline_pressure: float,
     rise_fraction: float = 0.03,
     baseline_fraction: float = 0.05,
+    p_threshold: Optional[float] = None,
 ) -> Tuple[float, float, float]:
     """
     Extract incident-shock arrival and strength from a probe trace.
@@ -54,8 +55,11 @@ def _shock_metrics_from_probe(
     if len(t) < 10:
         raise RuntimeError("Probe trace is too short to determine shock metrics.")
 
-    p_baseline, p_max, p_threshold = _probe_threshold_details(
-        p, rise_fraction=rise_fraction, baseline_fraction=baseline_fraction
+    p_baseline, p_max, threshold_used = _probe_threshold_details(
+        p,
+        rise_fraction=rise_fraction,
+        baseline_fraction=baseline_fraction,
+        p_threshold=p_threshold,
     )
     p_dynamic = float(p_max - p_baseline)
     if p_dynamic <= 0.0:
@@ -64,7 +68,7 @@ def _shock_metrics_from_probe(
         attenuation_metric = float(np.log(max(shock_pressure, 1e-12) / baseline_pressure))
         return arrival_time, shock_pressure, attenuation_metric
 
-    crossing = np.where(p >= p_threshold)[0]
+    crossing = np.where(p >= threshold_used)[0]
     if len(crossing) == 0:
         i_cross = int(np.argmax(np.gradient(p, t)))
         arrival_time = float(t[i_cross])
@@ -73,7 +77,7 @@ def _shock_metrics_from_probe(
         if i_cross > 0 and p[i_cross] != p[i_cross - 1]:
             # Interpolate threshold-crossing time so the arrival marker matches
             # the plotted threshold criterion (p >= p_threshold) more faithfully.
-            frac = (p_threshold - p[i_cross - 1]) / (p[i_cross] - p[i_cross - 1])
+            frac = (threshold_used - p[i_cross - 1]) / (p[i_cross] - p[i_cross - 1])
             arrival_time = float(t[i_cross - 1] + frac * (t[i_cross] - t[i_cross - 1]))
         else:
             arrival_time = float(t[i_cross])
@@ -89,13 +93,21 @@ def _probe_threshold_details(
     p: np.ndarray,
     rise_fraction: float,
     baseline_fraction: float,
+    p_threshold: Optional[float] = None,
 ) -> Tuple[float, float, float]:
-    """Return (p_baseline, p_max, p_threshold) used by shock thresholding."""
+    """Return (p_baseline, p_max, p_threshold) used by shock thresholding.
+
+    If ``p_threshold`` is provided, it is used directly and the default
+    rise-fraction equation is skipped.
+    """
     n0 = max(5, int(baseline_fraction * len(p)))
     p_baseline = float(np.mean(p[:n0]))
     p_max = float(np.max(p))
-    p_threshold = float(p_baseline + rise_fraction * (p_max - p_baseline))
-    return p_baseline, p_max, p_threshold
+    if p_threshold is None:
+        threshold_value = float(p_baseline + rise_fraction * (p_max - p_baseline))
+    else:
+        threshold_value = float(p_threshold)
+    return p_baseline, p_max, threshold_value
 
 
 # placeholder: branch-reset marker for new PR workflow
@@ -117,6 +129,7 @@ def _extract_shock_metrics_for_all_probes(
     baseline_pressure: float,
     rise_fraction: float,
     baseline_fraction: float,
+    p_threshold: Optional[float] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Apply single-probe shock capture to each probe trace."""
     arrivals = []
@@ -125,7 +138,12 @@ def _extract_shock_metrics_for_all_probes(
 
     for t_probe, p_probe in zip(probe_times, probe_pressures):
         arrival_t, p_shock, attn = _shock_metrics_from_probe(
-            t_probe, p_probe, baseline_pressure, rise_fraction=rise_fraction, baseline_fraction=baseline_fraction
+            t_probe,
+            p_probe,
+            baseline_pressure,
+            rise_fraction=rise_fraction,
+            baseline_fraction=baseline_fraction,
+            p_threshold=p_threshold,
         )
         arrivals.append(arrival_t)
         shock_pressures.append(p_shock)
@@ -142,6 +160,7 @@ def postprocess_probe_traces(
     boundary_layer_model: bool,
     rise_fraction: float = 0.03,
     baseline_fraction: float = 0.05,
+    p_threshold: Optional[float] = None,
     sound_speed_a1: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Post-process probe arrays after single-probe shock capture.
@@ -157,6 +176,7 @@ def postprocess_probe_traces(
         baseline_pressure=baseline_pressure,
         rise_fraction=rise_fraction,
         baseline_fraction=baseline_fraction,
+        p_threshold=p_threshold,
     )
 
     attenuation_rate, attenuation_intercept = np.polyfit(x_probe, attenuation_values, 1)
@@ -265,6 +285,7 @@ def postprocess_probe_file(
     raw_results_file: str,
     rise_fraction: float = 0.03,
     baseline_fraction: float = 0.05,
+    p_threshold: Optional[float] = None,
     probe_locations: Optional[Sequence[float]] = None,
 ) -> Dict[str, Any]:
     """Load cached results from disk and recompute shock metrics offline.
@@ -296,6 +317,7 @@ def postprocess_probe_file(
         boundary_layer_model=True,
         rise_fraction=rise_fraction,
         baseline_fraction=baseline_fraction,
+        p_threshold=p_threshold,
         sound_speed_a1=sound_speed_a1,
     )
 
@@ -332,6 +354,7 @@ def _plot_postprocessed_results(
     boundary_layer_model: bool,
     rise_fraction: float,
     baseline_fraction: float,
+    p_threshold: Optional[float] = None,
     fontsize: int = 11,
 ) -> Tuple[Any, Optional[Any]]:
     """Create probe and speed-fit plots from postprocessed data."""
@@ -356,16 +379,20 @@ def _plot_postprocessed_results(
         axes[i].axvline(arrivals[i] * 1000.0, color="r", linestyle="--", linewidth=1.2, label="shock arrival")
         axes[i].set_ylabel("p [bar]")
         axes[i].set_title("Probe %d at x = %.2f m" % (i + 1, probe_locations[i]))
-        p_baseline, p_max, p_threshold = _probe_threshold_details(
-            np.array(p_probe), rise_fraction=rise_fraction, baseline_fraction=baseline_fraction
+        p_baseline, p_max, threshold_used = _probe_threshold_details(
+            np.array(p_probe),
+            rise_fraction=rise_fraction,
+            baseline_fraction=baseline_fraction,
+            p_threshold=p_threshold,
         )
-        axes[i].axhline(p_threshold / 1.0e5, color="tab:green", linestyle=":", linewidth=1.1, label="threshold")
+        axes[i].axhline(threshold_used / 1.0e5, color="tab:green", linestyle=":", linewidth=1.1, label="threshold")
         details = (
             f"rise_fraction={rise_fraction:.4f}\n"
             f"baseline_fraction={baseline_fraction:.4f}\n"
+            f"p_threshold_input={'auto' if p_threshold is None else f'{p_threshold/1e5:.3f} bar'}\n"
             f"p_max={p_max/1e5:.3f} bar\n"
             f"p_baseline={p_baseline/1e5:.3f} bar\n"
-            f"p_threshold={p_threshold/1e5:.3f} bar"
+            f"p_threshold_used={threshold_used/1e5:.3f} bar"
         )
         axes[i].text(
             0.99,
@@ -456,6 +483,7 @@ def postprocess_cached_results(
     probe_locations: Optional[Sequence[float]] = None,
     rise_fraction: float = 0.03,
     baseline_fraction: float = 0.05,
+    p_threshold: Optional[float] = None,
     show_results: bool = True,
     boundary_layer_model: Optional[bool] = None,
 ) -> Dict[str, Any]:
@@ -482,6 +510,7 @@ def postprocess_cached_results(
         str(cache_file),
         rise_fraction=rise_fraction,
         baseline_fraction=baseline_fraction,
+        p_threshold=p_threshold,
         probe_locations=selected_probe_locations,
     )
 
@@ -497,6 +526,7 @@ def postprocess_cached_results(
         boundary_layer_model=effective_boundary_layer_model,
         rise_fraction=rise_fraction,
         baseline_fraction=baseline_fraction,
+        p_threshold=p_threshold,
     )
 
     if show_results:
@@ -537,6 +567,7 @@ def postprocess_cached_results(
         probe_p=np.array(probe_p, dtype=object),
         probe_rise_fraction=rise_fraction,
         probe_baseline_fraction=baseline_fraction,
+        probe_threshold=np.nan if p_threshold is None else float(p_threshold),
         sound_speed_a1=sound_speed_a1,
     )
     fig.savefig(results_dir / f"{case_name}_attenuation_probes.png", dpi=200)
@@ -566,6 +597,7 @@ def main(
     probe_locations: Sequence[float] = (0.5,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0,5.47),
     probe_rise_fraction: float = 0.03,
     probe_baseline_fraction: float = 0.05,
+    probe_threshold: Optional[float] = None,
     case_name: str = "case1",
     expose_results_to_globals: bool = False,
 
@@ -687,6 +719,7 @@ def main(
         probe_p=np.array(probe_p, dtype=object),
         probe_rise_fraction=probe_rise_fraction,
         probe_baseline_fraction=probe_baseline_fraction,
+        probe_threshold=np.nan if probe_threshold is None else float(probe_threshold),
         sound_speed_a1=_gas_sound_speed(gas1),
         Boundary_Layer_Model=Boundary_Layer_Model,
     )
@@ -697,6 +730,7 @@ def main(
         probe_locations=probe_locations,
         rise_fraction=probe_rise_fraction,
         baseline_fraction=probe_baseline_fraction,
+        p_threshold=probe_threshold,
         show_results=show_results,
         boundary_layer_model=None,
     )
@@ -715,6 +749,7 @@ def main(
         "gas4": gas4,
         "probe_rise_fraction": probe_rise_fraction,
         "probe_baseline_fraction": probe_baseline_fraction,
+        "probe_threshold": probe_threshold,
         "Boundary_Layer_Model": Boundary_Layer_Model,
         "T1": T1,
         "P1": P1,
