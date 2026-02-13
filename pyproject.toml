@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "StanShock"
+version = "0.1.1"
+description = "Quasi-1D gas dynamics solver for shock tube simulations"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [
+  {name = "Ihme Group"}
+]
+dependencies = [
+  "numpy",
+  "scipy",
+  "matplotlib",
+  "cantera"
+]
+
+[tool.setuptools]
+packages = ["StanShock"]

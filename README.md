@@ -23,9 +23,15 @@ With conda one can create a new virtual environment named _stanshock_ for python
 
 `conda create --name stanshock python=3.9`
 
-The requirements are listed in the _requirements.txt_ file. One may install these requirements into the current python environment using
+The requirements are listed in the _requirements.txt_ file. Install them into the current python environment using
 
 `python -m pip install -r requirements.txt`
+
+Then install StanShock itself so imports like `from StanShock.stanShock import stanShock` work from any directory (including notebooks):
+
+`python -m pip install -e .`
+
+When running Jupyter, make sure the notebook is using the same Python environment where the commands above were run.
 
 ## Usage
 Included are six examples in the _examples_ folder:
