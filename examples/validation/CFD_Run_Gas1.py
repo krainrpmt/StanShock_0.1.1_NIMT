@@ -777,29 +777,6 @@ def main(
 
     return out
 
-'''
-main(  
-    DDriver = 122.24/1000,
-    DDriven = 122.24/1000,
-    LDriver = 3.96,
-    LDriven = 5.49,
-    mech_filename_gas_1 = "gri30_He.yaml",
-    mech_filename_gas_4= "gri30_He.yaml",
-    show_results= False,
-    results_location = None,
-    t_final = 30e-3,
-    n_x= 1000,
-    cfl= 0.05,
-    T1= 296.15,
-    P1= 20000,
-    T4= 296.15,
-    P4= 110400,
-    X1 = 'H2:4, O2:2, Ar:94', #4PctH2_2PctO2_94PctAr
-    X4 = 'He:58.8971, Ar:41.1029', #'He:21.8787, N2:78.1213'
-    Boundary_Layer_Model = True,
-    case_name = "case1_30ms_nx1000_cfl0-05",
-    expose_results_to_globals = False)
-'''
 main(
     DDriver=122.24 / 1000,
     DDriven=122.24 / 1000,
@@ -810,7 +787,7 @@ main(
     show_results= False,
     results_location = None,
     t_final = 30e-3,
-    n_x= 3000,
+    n_x= 1000,
     cfl= 0.05,
     T1= 296.15,
     P1= 20000,
