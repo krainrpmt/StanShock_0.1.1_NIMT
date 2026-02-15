@@ -136,6 +136,4 @@ dmypy.json
 
 # npz
 .npz
-/examples/validation/SOD + BL Simulation Output/6619_30ms_nx2000_cfl0-05_attenuation.npz
-/examples/validation/SOD + BL Simulation Output/6619_30ms_nx3000_cfl0-5_attenuation.npz
-/examples/validation/SOD + BL Simulation Output/6619_30ms_nx3000_cfl0-05_attenuation.npz
+
