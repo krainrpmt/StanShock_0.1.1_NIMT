@@ -590,6 +590,10 @@ def postprocess_cached_results(
 
 def main(
         #PROJECT_DIR / "data/mechanisms/HeliumArgon.xml",
+    DDriver: float,
+    DDriven: float,
+    LDriver: float,
+    LDriven: float,
     mech_filename_gas_1: str = "gri30_He.yaml",
     mech_filename_gas_4: str = "gri30_He.yaml",
     show_results: bool = True,
@@ -774,7 +778,12 @@ def main(
     return out
 
 '''
-main(  mech_filename_gas_1 = "gri30_He.yaml",
+main(  
+    DDriver = 122.24/1000,
+    DDriven = 122.24/1000,
+    LDriver = 3.96,
+    LDriven = 5.49,
+    mech_filename_gas_1 = "gri30_He.yaml",
     mech_filename_gas_4= "gri30_He.yaml",
     show_results= False,
     results_location = None,
@@ -791,7 +800,12 @@ main(  mech_filename_gas_1 = "gri30_He.yaml",
     case_name = "case1_30ms_nx1000_cfl0-05",
     expose_results_to_globals = False)
 '''
-main(  mech_filename_gas_1 = "gri30_He.yaml",
+main(
+    DDriver=122.24 / 1000,
+    DDriven=122.24 / 1000,
+    LDriver=3.96,
+    LDriven=5.49,
+    mech_filename_gas_1 = "gri30_He.yaml",
     mech_filename_gas_4= "gri30_He.yaml",
     show_results= False,
     results_location = None,
