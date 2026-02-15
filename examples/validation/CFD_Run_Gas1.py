@@ -580,9 +580,9 @@ def postprocess_cached_results(
         probe_threshold=np.nan if p_threshold is None else float(p_threshold),
         sound_speed_a1=sound_speed_a1,
     )
-    fig.savefig(results_dir / f"{case_name}_attenuation_probes.png", dpi=200)
-    if fig_speed is not None:
-        fig_speed.savefig(results_dir / f"{case_name}_attenuation_speed_fit.png", dpi=200)
+    #fig.savefig(results_dir / f"{case_name}_attenuation_probes.png", dpi=200)
+    #if fig_speed is not None:
+    #    fig_speed.savefig(results_dir / f"{case_name}_attenuation_speed_fit.png", dpi=200)
 
     out = dict(metrics)
     out.update({"xt_time": xt_time, "xt_x": xt_x, "xt_pressure": xt_pressure, "xt_density": xt_density, "xt_temperature": xt_temperature, "probe_t": probe_t, "probe_p": probe_p})
