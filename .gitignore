@@ -135,5 +135,5 @@ dmypy.json
 .DS_Store
 
 # npz
-.npz
+*.npz
 
