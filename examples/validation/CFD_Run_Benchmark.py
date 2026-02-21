@@ -623,12 +623,6 @@ def main(
     # plotting parameters
     fontsize = 11
 
-    # provided geometry
-    DDriven = 122.24/1000 #m
-    DDriver = DDriven
-    LDriver = 3.96 #m
-    LDriven = 5.49 #m
-
     # Set up gases from user-provided initial states
     u1 = 0.0
     u4 = 0.0  # initially 0 velocity
